@@ -7,7 +7,7 @@
   },
   "build": {
     "files": ["main.js", "package.json", "build/**/*"],
-    "appId": "com.acer.erp",
+    "appId": "com.accure.erp",
     "productName": "Accure ERP",
     "icon": "build/icon.ico",
     "win": {
