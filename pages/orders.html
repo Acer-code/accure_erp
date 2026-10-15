@@ -10,6 +10,17 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
   <!-- SheetJS: used to read serial numbers out of an uploaded Excel/CSV file, same as inventory.html -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <!-- sidebar scrollbar -->
+  <style id="sidebar-scroll-fix">
+    .sidebar { max-height: 100vh; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.6) transparent; }
+    .sidebar::-webkit-scrollbar { width: 6px; }
+    .sidebar::-webkit-scrollbar-track { background: transparent; }
+    .sidebar::-webkit-scrollbar-thumb { background: rgba(148,163,184,.55); border-radius: 999px; }
+    .sidebar::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.9); }
+  </style>
+  <style id="dispatched-badge">
+    .dispatched { background: #e0edff; color: #1665ff; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+  </style>
 </head>
 
 <body>
@@ -145,6 +156,7 @@
             <option>All Status</option>
             <option>Pending</option>
             <option>Processing</option>
+            <option>Dispatched</option>
             <option>Delivered</option>
             <option>Cancelled</option>
             <option>Returned</option>
@@ -177,7 +189,7 @@
               <th><input type="checkbox"></th>
               <th>Creator</th>
               <th>Product</th>
-              <th>Serial No</th>
+              <th>Quantity</th>
               <th>Ordered By</th>
               <th>Payment Mode</th>
               <th>Order Date</th>
@@ -336,6 +348,7 @@
         <select required>
           <option value="placed">Pending</option>
           <option value="processing">Processing</option>
+          <option value="dispatched">Dispatched</option>
           <option value="delivered">Delivered</option>
           <option value="cancelled">Cancelled</option>
           <option value="returned">Returned</option>

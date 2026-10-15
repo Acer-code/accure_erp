@@ -1,3 +1,9 @@
+/* ---- A4 print support: print_a4.js is loaded on demand (safe if it is missing) ---- */
+(function () { if (typeof A4Print === 'undefined' && !document.getElementById('a4printjs')) { const s = document.createElement('script'); s.id = 'a4printjs'; s.src = 'print_a4.js'; document.head.appendChild(s); } })();
+function a4Ready(cb, n) { n = n || 0; if (typeof A4Print !== 'undefined') return cb(); if (n < 50) setTimeout(() => a4Ready(cb, n + 1), 200); }
+function a4Intercept(head, rows, name) { return typeof A4Print !== 'undefined' && A4Print.intercept(head, rows, name); }
+function a4WizardPrint(modal, title) { if (typeof A4Print !== 'undefined') A4Print.wizardPrint(modal, title); }
+function a4Twin(btn, title) { if (btn) a4Ready(() => A4Print.attachTwin(btn, title)); }
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -33,6 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
   wireHeaderSearch();
   injectAllocateModal();
   wireNotifBell();
+  wireAllocCardClicks();
   setInterval(() => renderAllocationsTable(getFilteredAllocations()), 60 * 1000); // keep countdowns fresh
   setInterval(loadPendingRequests, 60 * 1000);
 });
@@ -106,6 +113,8 @@ async function loadPendingRequests() {
   const canView = role === 'admin' || role === 'accounts' || role === 'service_manager';
   if (!canView) {
     if (section) section.style.display = 'none';
+    const reqCardBox = document.getElementById('cardPendingRequests')?.closest('.card');
+    if (reqCardBox) reqCardBox.style.display = 'none';
     return;
   }
   try {
@@ -117,6 +126,38 @@ async function loadPendingRequests() {
   } catch (err) {
     console.error(err);
   }
+}
+
+function detailRow(label, value) {
+  if (value === undefined || value === null || value === '') return '';
+  return `<div class="detail"><small>${label}</small><p>${esc(String(value))}</p></div>`;
+}
+function itemDetailBlock(i, withPrice) {
+  const rows = [
+    detailRow('Product Name', i.product_name), detailRow('Product ID', i.product_id), detailRow('Model No.', i.model_no),
+    detailRow('Quantity', i.quantity), detailRow('Serial No.', (i.serial_numbers || []).join(', ')),
+  ];
+  if (withPrice) rows.push(detailRow('Price (per unit)', i.price != null && i.price !== '' ? '₹' + i.price : ''), detailRow('Tax Rate', i.tax_rate != null && i.tax_rate !== '' ? i.tax_rate + '%' : ''));
+  return `<div style="border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;margin-bottom:8px;">${rows.join('')}</div>`;
+}
+function customerDetailBlock(c) {
+  c = c || {};
+  return detailRow('Company', c.company_name) + detailRow('Address', c.company_address || c.address)
+    + detailRow('GST No.', c.gst_number) + detailRow('Contact Person', c.contractor_person)
+    + detailRow('Contact Number', c.contractor_number || c.phone_number) + detailRow('Email', c.contractor_email);
+}
+function reqItemLabel(i) {
+  const extra = [i.product_id, i.model_no].filter(Boolean).join(' · ');
+  return esc(i.product_name || '') + (extra ? ` (${esc(extra)})` : '');
+}
+
+// "dd/mm/yyyy, hh:mm AM/PM" — date AND time the request was generated
+function fmtReqDateTime(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  if (isNaN(d)) return '-';
+  return d.toLocaleDateString('en-GB') + ', ' +
+    d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: true });
 }
 
 function renderPendingRequests() {
@@ -134,6 +175,8 @@ function renderPendingRequests() {
     badge.textContent = pending.length;
   }
   if (countLabel) countLabel.textContent = pending.length ? `(${pending.length})` : '';
+  const reqCard = document.getElementById('cardPendingRequests');
+  if (reqCard) reqCard.textContent = pending.length;
 
   if (!pending.length) {
     box.innerHTML = '<p style="color:#94a3b8;padding:10px;">No pending requests.</p>';
@@ -147,18 +190,18 @@ function renderPendingRequests() {
     let title, subtitle;
     if (r.request_type === 'demo_unit') {
       title = `Demo Unit — ${esc(r.raised_by)}`;
-      subtitle = (r.details?.items || []).map(i => `${i.product_name} x${i.quantity}`).join(', ')
+      subtitle = (r.details?.items || []).map(i => `${reqItemLabel(i)} x${i.quantity}`).join(', ')
         + (r.details?.remarks ? ` • Remarks: ${esc(r.details.remarks)}` : '');
     } else if (r.request_type === 'return_demo') {
       title = `Demo Return — ${esc(r.raised_by)}`;
-      subtitle = (r.details?.items || []).map(i => `${i.product_name} x${i.quantity}`).join(', ')
+      subtitle = (r.details?.items || []).map(i => `${reqItemLabel(i)} x${i.quantity}`).join(', ')
         + ` • Through: ${esc(r.details?.returned_through || '-')}`;
     } else if (r.request_type === 'convert_to_order') {
       title = `Convert Demo to Order — ${esc(r.details?.customer?.company_name || '')}`;
-      subtitle = (r.details?.items || []).map(i => `${i.product_name} x${i.quantity} @ ₹${i.price}`).join(', ');
+      subtitle = (r.details?.items || []).map(i => `${reqItemLabel(i)} x${i.quantity} @ ₹${i.price}`).join(', ');
     } else if (r.request_type === 'order') {
       title = `Order — ${r.details?.customer?.company_name || 'New customer'}`;
-      subtitle = (r.details?.items || []).map(i => `${i.product_name} x${i.quantity}`).join(', ');
+      subtitle = (r.details?.items || []).map(i => `${reqItemLabel(i)} x${i.quantity}`).join(', ');
     } else if (r.request_type === 'media_review') {
       title = `Service Media — Service #${(r.details?.service_id || '').slice(0, 8)}`;
       subtitle = 'Video uploaded, awaiting download confirmation';
@@ -179,16 +222,22 @@ function renderPendingRequests() {
           <button class="req-reject-btn" style="padding:6px 12px;border:none;border-radius:8px;background:#d62828;color:#fff;cursor:pointer;">Reject</button>
         </div>`;
 
+    const typeLabel = ALLOC_REQ_LABELS[r.request_type] || 'Request';
     return `
-      <div class="order-item" data-id="${r.request_id}">
-        <div class="order-left">
+      <div class="order-item" data-id="${r.request_id}" style="align-items:flex-start;gap:14px;">
+        <div class="order-left" style="align-items:flex-start;min-width:0;flex:1;">
           <div class="order-icon"><i class="fa-solid ${icon}"></i></div>
-          <div>
-            <h4>${title}</h4>
-            <p>${subtitle} • raised by ${r.raised_by}</p>
+          <div style="min-width:0;">
+            <h4 style="margin:0 0 4px;">${title}</h4>
+            <p style="margin:0 0 6px;word-break:break-word;">${subtitle || '-'}</p>
+            <div style="display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:#64748b;">
+              <span style="background:#eef2ff;color:#3730a3;padding:2px 8px;border-radius:999px;font-weight:600;">${esc(typeLabel)}</span>
+              <span><i class="fa-regular fa-user"></i> Raised by <b>${esc(r.raised_by ?? '-')}</b></span>
+              <span title="Request generated on"><i class="fa-regular fa-clock"></i> Requested on <b>${fmtReqDateTime(r.created_at)}</b></span>
+            </div>
           </div>
         </div>
-        <div style="display:flex;align-items:center;gap:10px;">
+        <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
           <button class="req-view-btn" title="View details" style="border:none;background:none;color:#1665ff;font-size:16px;cursor:pointer;"><i class="fa-solid fa-circle-info"></i></button>
           ${actions}
         </div>
@@ -218,16 +267,14 @@ function openRequestDetailsModal(r) {
 
   if (r.request_type === 'demo_unit') {
     heading = 'Demo Unit Request';
-    const itemsRows = (d.items || []).map(i => `
-      <div class="detail"><small>Product</small><p>${esc(i.product_name)} — Qty: ${i.quantity ?? ''}</p></div>`).join('');
+    const itemsRows = (d.items || []).map(i => itemDetailBlock(i, true)).join('');
     body = `
       ${itemsRows || '<div class="detail"><small>Products</small><p>-</p></div>'}
       <div class="detail"><small>Requested By</small><p>${esc(r.raised_by)}</p></div>
       <div class="detail"><small>Remarks</small><p>${esc(d.remarks || '-')}</p></div>`;
   } else if (r.request_type === 'return_demo') {
     heading = 'Demo Unit Return';
-    const itemsRows = (d.items || []).map(i => `
-      <div class="detail"><small>Product</small><p>${esc(i.product_name)} — Qty: ${i.quantity ?? ''}${i.serial_numbers?.length ? ', SN: ' + esc(i.serial_numbers.join(', ')) : ''}</p></div>`).join('');
+    const itemsRows = (d.items || []).map(i => itemDetailBlock(i, false)).join('');
     // proof file is a large base64 blob, so it is not part of the request list — loaded when this modal opens
     const proofHtml = (d.proof && (d.proof.name || d.proof.data))
       ? '<p id="proofBox" style="font-size:12px;color:#94a3b8;">Loading proof…</p>'
@@ -239,22 +286,19 @@ function openRequestDetailsModal(r) {
       <div class="detail"><small>Requested By</small><p>${esc(r.raised_by)}</p></div>`;
   } else if (r.request_type === 'convert_to_order') {
     heading = 'Convert Demo to Order';
-    const itemsRows = (d.items || []).map(i => `
-      <div class="detail"><small>Product</small><p>${esc(i.product_name)} — Qty: ${i.quantity ?? ''}, Price: ₹${i.price ?? '-'}${i.serial_numbers?.length ? ', SN: ' + esc(i.serial_numbers.join(', ')) : ''}</p></div>`).join('');
+    const itemsRows = (d.items || []).map(i => itemDetailBlock(i, true)).join('');
     body = `
       ${itemsRows}
-      <div class="detail"><small>Company</small><p>${esc(d.customer?.company_name || '-')}</p></div>
-      <div class="detail"><small>Address</small><p>${esc(d.customer?.company_address || '-')}</p></div>
-      <div class="detail"><small>GST No.</small><p>${esc(d.customer?.gst_number || '-')}</p></div>
+      ${customerDetailBlock(d.customer)}
       <div class="detail"><small>Requested By</small><p>${esc(r.raised_by)}</p></div>`;
   } else if (r.request_type === 'order') {
     heading = 'Order Request';
-    const itemsRows = (d.items || []).map(i => `
-      <div class="detail"><small>Product</small><p>${i.product_name ?? ''} — Qty: ${i.quantity ?? ''}, Price: ₹${i.price ?? '-'}</p></div>`).join('');
+    const itemsRows = (d.items || []).map(i => itemDetailBlock(i, true)).join('');
     body = `
       ${itemsRows || '<div class="detail"><small>Products</small><p>-</p></div>'}
-      <div class="detail"><small>Customer</small><p>${d.customer?.company_name ?? '-'}</p></div>
-      <div class="detail"><small>Address</small><p>${d.customer?.company_address ?? '-'}</p></div>
+      ${customerDetailBlock(d.customer)}
+      ${detailRow('Payment Mode', d.payment_mode)}${detailRow('Discount', d.discount ? '₹' + d.discount : '')}
+      <div class="detail"><small>Requested By</small><p>${esc(r.raised_by ?? '-')}</p></div>
       ${(d.attachments || []).length ? `<div class="detail"><small>Attachments</small><p>${d.attachments.map((f, i) => `<a href="#" class="attach-link" data-i="${i}" style="display:block;color:#1665ff;">${esc(f.name)}</a>`).join('')}</p></div>` : ''}`;
   } else if (r.request_type === 'spare_part') {
     heading = 'Spare Part Request';
@@ -275,12 +319,14 @@ function openRequestDetailsModal(r) {
       <div class="detail"><small>Requested By</small><p>${r.raised_by ?? '-'}</p></div>`;
   }
 
+  content.style.maxHeight = '86vh'; content.style.overflowY = 'auto';
   content.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
       <h3>${heading}</h3>
       <button class="close" style="border:none;background:none;font-size:20px;cursor:pointer;">&times;</button>
     </div>
-    ${body}`;
+    ${body}
+    <div class="detail"><small>Requested On</small><p>${fmtReqDateTime(r.created_at)}</p></div>`;
 
   content.querySelector('.close').addEventListener('click', () => modal.style.display = 'none');
   content.querySelectorAll('.attach-link').forEach(link => link.addEventListener('click', async e => {
@@ -318,10 +364,137 @@ function rowRequestId(e) {
   return e.target.closest('.order-item').dataset.id;
 }
 
+// ---------- payment block for turning a demo unit into an order ----------
+// Same payment modes as the Orders page (Credit / Partial / Net Banking / UPI / Cheque / DD / Cash),
+// so a converted order carries a real payment mode instead of a "Demo Conversion" label.
+const CONV_PAY_MODES = [
+  ['Credit', 'Credit'], ['Partial', 'Partial (part now, rest later)'], ['NetBanking', 'Net Banking'],
+  ['UPI', 'UPI'], ['Cheque', 'Cheque'], ['DemandDraft', 'Demand Draft'], ['Cash', 'Cash'],
+];
+const CONV_PAY_INP = 'width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:8px;';
+
+function convPayHtml(selected) {
+  return `
+    <select id="cvPayMode" style="${CONV_PAY_INP}">
+      <option value="">Select Payment Mode *</option>
+      ${CONV_PAY_MODES.map(([v, l]) => `<option value="${v}" ${v === selected ? 'selected' : ''}>${l}</option>`).join('')}
+    </select>
+    <div id="cvPayExtra" style="display:flex;flex-direction:column;gap:8px;"></div>`;
+}
+
+function convPayDaysHtml(idPrefix, label) {
+  return `
+    <label style="font-size:12px;color:#64748b;">${label}</label>
+    <select id="${idPrefix}Days" style="${CONV_PAY_INP}">
+      <option value="15">15 days</option><option value="30">30 days</option>
+      <option value="45">45 days</option><option value="60">60 days</option>
+      <option value="manual">Other (enter days)</option>
+    </select>
+    <input id="${idPrefix}DaysManual" type="number" min="1" max="60" placeholder="Enter days (max 60)" style="display:none;${CONV_PAY_INP}">`;
+}
+
+// getTotal() -> order total incl. tax, used for the Partial balance hint / check
+function convPayRender(mode, getTotal) {
+  const box = document.getElementById('cvPayExtra');
+  if (!box) return;
+  const f = (id, ph, type) => `<input id="${id}" ${type ? `type="${type}"` : ''} placeholder="${ph}" style="${CONV_PAY_INP}">`;
+  if (mode === 'Credit') {
+    box.innerHTML = convPayDaysHtml('cvpC', 'Credit period');
+  } else if (mode === 'Partial') {
+    box.innerHTML = `
+      <label style="font-size:12px;color:#64748b;">Amount paid now (₹)</label>
+      <input id="cvpPaid" type="number" min="0" step="any" placeholder="e.g. half of the total" style="${CONV_PAY_INP}">
+      ${convPayDaysHtml('cvpP', 'In how many days will the remaining payment be made?')}
+      <div id="cvpHint" style="font-size:12px;color:#b45309;background:#fffbeb;border-radius:8px;padding:8px 10px;"></div>`;
+    const paid = document.getElementById('cvpPaid'), hint = document.getElementById('cvpHint');
+    const refresh = () => {
+      const total = getTotal(), p = Number(paid.value) || 0;
+      const fmt = n => '₹' + n.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+      hint.textContent = `Order total (incl. tax): ${fmt(total)} — paid now ${fmt(p)}, balance ${fmt(Math.max(total - p, 0))} on credit.`;
+    };
+    paid.addEventListener('input', refresh);
+    refresh();
+    // price / tax can change in the direct-convert form while this block is open
+    ['cvPrice', 'cvTax'].forEach(id => document.getElementById(id)?.addEventListener('input', refresh));
+  } else if (mode === 'Cheque') {
+    box.innerHTML = f('cvpChqNo', 'Cheque Number') + f('cvpChqDate', '', 'date') + f('cvpChqBank', 'Bank Name');
+  } else if (mode === 'DemandDraft') {
+    box.innerHTML = f('cvpDdNo', 'Demand Draft Number') + f('cvpDdDate', '', 'date') + f('cvpDdBank', 'Bank Name');
+  } else if (mode === 'UPI') {
+    box.innerHTML = f('cvpUpi', 'UPI ID (e.g. name@bank)');
+  } else if (mode === 'NetBanking') {
+    box.innerHTML = f('cvpNbBank', 'Bank Name') + f('cvpNbAcc', 'Account Number') + f('cvpNbIfsc', 'IFSC Code');
+  } else if (mode === 'Cash') {
+    box.innerHTML = f('cvpCash', 'Received By (Person Name)');
+  } else {
+    box.innerHTML = '';
+  }
+  box.querySelectorAll('select[id$="Days"]').forEach(sel => sel.addEventListener('change', () => {
+    document.getElementById(sel.id + 'Manual').style.display = sel.value === 'manual' ? 'block' : 'none';
+  }));
+}
+
+// wires the mode <select> built by convPayHtml()
+function convPayWire(getTotal) {
+  const sel = document.getElementById('cvPayMode');
+  if (!sel) return;
+  sel.addEventListener('change', () => convPayRender(sel.value, getTotal));
+  convPayRender(sel.value, getTotal);
+}
+
+// returns { payment_mode, payment_details } or throws an Error with a message for the user
+function convPayRead(getTotal) {
+  const mode = document.getElementById('cvPayMode')?.value || '';
+  if (!mode) throw new Error('Please select a payment mode.');
+  const v = id => (document.getElementById(id)?.value || '').trim();
+  const days = prefix => {
+    const sel = v(prefix + 'Days');
+    return Number(sel === 'manual' ? v(prefix + 'DaysManual') : sel);
+  };
+  if (mode === 'Credit') {
+    const d = days('cvpC');
+    if (!d || d < 1 || d > 60) throw new Error('Credit days must be between 1 and 60.');
+    return { payment_mode: mode, payment_details: { credit_days: d } };
+  }
+  if (mode === 'Partial') {
+    const paid = Number(v('cvpPaid')) || 0, d = days('cvpP'), total = getTotal();
+    if (paid <= 0) throw new Error('Enter the amount paid now for a partial payment.');
+    if (total > 0 && paid >= total) throw new Error('Partial payment must be less than the order total — choose another payment mode.');
+    if (!d || d < 1 || d > 60) throw new Error('Days for the remaining payment must be between 1 and 60.');
+    return { payment_mode: mode, payment_details: { paid_amount: paid, credit_days: d } };
+  }
+  if (mode === 'Cheque') {
+    if (!v('cvpChqNo') || !v('cvpChqDate')) throw new Error('Cheque number and date are required.');
+    return { payment_mode: mode, payment_details: { cheque_number: v('cvpChqNo'), cheque_date: v('cvpChqDate'), bank_name: v('cvpChqBank') } };
+  }
+  if (mode === 'DemandDraft') {
+    if (!v('cvpDdNo') || !v('cvpDdDate')) throw new Error('Demand draft number and date are required.');
+    return { payment_mode: mode, payment_details: { dd_number: v('cvpDdNo'), dd_date: v('cvpDdDate'), bank_name: v('cvpDdBank') } };
+  }
+  if (mode === 'UPI') {
+    if (!v('cvpUpi')) throw new Error('UPI ID is required.');
+    return { payment_mode: mode, payment_details: { upi_id: v('cvpUpi') } };
+  }
+  if (mode === 'NetBanking') {
+    if (!v('cvpNbBank') || !v('cvpNbAcc') || !v('cvpNbIfsc')) throw new Error('Bank name, account number and IFSC code are required.');
+    return { payment_mode: mode, payment_details: { bank_name: v('cvpNbBank'), account_number: v('cvpNbAcc'), ifsc_code: v('cvpNbIfsc') } };
+  }
+  if (mode === 'Cash') {
+    if (!v('cvpCash')) throw new Error('Received-by person name is required.');
+    return { payment_mode: mode, payment_details: { received_by: v('cvpCash') } };
+  }
+  throw new Error('Invalid payment mode.');
+}
+
 function openInvoiceModal(r) {
   const modal = document.getElementById('viewAllocationModal');
   const content = modal.querySelector('.modal-content');
+  content.style.maxHeight = '86vh'; content.style.overflowY = 'auto';
   const d = r.details || {};
+  const getTotal = () => Math.round((d.items || []).reduce((s, i) => {
+    const line = (Number(i.price) || 0) * (Number(i.quantity) || 0);
+    return s + line + line * (Number(i.tax_rate) || 0) / 100;
+  }, 0) * 100) / 100;
   content.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
       <h3>Invoice Details</h3>
@@ -332,6 +505,7 @@ function openInvoiceModal(r) {
     <form id="invoiceForm" style="display:flex;flex-direction:column;gap:10px;margin-top:10px;">
       <input name="invoice_no" placeholder="Invoice Number" required>
       <input name="invoice_date" type="date" required>
+      ${convPayHtml('')}
       <div style="display:flex;justify-content:space-between;margin-top:6px;">
         <button type="button" id="invoiceCancel" style="padding:10px 16px;border-radius:8px;border:none;background:#e5e7eb;cursor:pointer;">Cancel</button>
         <button type="submit" style="padding:10px 16px;border-radius:8px;border:none;background:#16a34a;color:#fff;cursor:pointer;">Approve &amp; Create Order</button>
@@ -340,10 +514,13 @@ function openInvoiceModal(r) {
   const close = () => modal.style.display = 'none';
   content.querySelector('.close').addEventListener('click', close);
   document.getElementById('invoiceCancel').addEventListener('click', close);
+  convPayWire(getTotal);
   document.getElementById('invoiceForm').addEventListener('submit', async e => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    await approveRequest(r.request_id, { invoice_no: fd.get('invoice_no'), invoice_date: fd.get('invoice_date') });
+    let pay;
+    try { pay = convPayRead(getTotal); } catch (err) { alert(err.message); return; }
+    await approveRequest(r.request_id, { invoice_no: fd.get('invoice_no'), invoice_date: fd.get('invoice_date'), ...pay });
     close();
   });
   modal.style.display = 'flex';
@@ -420,6 +597,246 @@ function returnMeta(a) {
   return { label: `${daysLeft}d left`, cls: daysLeft <= 2 ? 'medium' : 'high', overdue: false, complete: false };
 }
 
+function allocCardList(type) {
+  const all = allocState.allocations;
+  if (type === 'all') return all;
+  if (type === 'pending') return all.filter(a => !returnMeta(a).complete && !returnMeta(a).overdue);
+  if (type === 'overdue') return all.filter(a => !returnMeta(a).complete && returnMeta(a).overdue);
+  if (type === 'returned') return all.filter(a => returnMeta(a).complete);
+  return [];
+}
+
+function requestSummary(r) {
+  const items = r.details?.items || r.details?.items_list || [];
+  if (items.length) return items.map(i => `${esc(i.product_name || '')} x${i.quantity ?? 1}`).join(', ');
+  if (r.details?.customer?.company_name) return esc(r.details.customer.company_name);
+  if (r.details?.service_id) return `Service #${esc(r.details.service_id.slice(0, 8))}`;
+  return '-';
+}
+
+const allocCV = { type: '', base: [], f: {}, requests: false };
+const ALLOC_REQ_LABELS = { demo_unit: 'Demo Unit', spare_part: 'Spare Part', order: 'Order', media_review: 'Service Media', status_update: 'Status Change', convert_to_order: 'Convert to Order', return_demo: 'Demo Return' };
+const ALLOC_KIND_LABELS = { product: 'Product', demo_unit: 'Demo', spare_part: 'Spare Part' };
+
+function cvEnsureStyles() {
+  if (document.getElementById('cvStyles')) return;
+  const st = document.createElement('style');
+  st.id = 'cvStyles';
+  st.textContent = `
+    .cv-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    .cv-head h3{margin:0}
+    .cv-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+    .cv-bar select,.cv-bar input{padding:7px 9px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;background:var(--bg-white);min-width:0}
+    .cv-bar input[type=text]{flex:1;min-width:150px}
+    .cv-bar label{font-size:12px;color:var(--text-muted)}
+    .cv-btn{padding:8px 12px;border:none;border-radius:8px;cursor:pointer;font-size:12.5px;font-weight:600}
+    .cv-btn.exp{background:var(--primary);color:#fff}
+    .cv-btn.rst{background:var(--bg-hover);color:var(--text-secondary)}
+    .cv-count{font-size:12px;color:var(--text-muted);margin:0 0 8px}
+    .cv-wrap{overflow:auto;max-height:58vh;border:1px solid var(--border);border-radius:10px}
+    .cv-tbl{width:100%;font-size:12.5px;border-collapse:collapse;min-width:760px}
+    .cv-tbl th{position:sticky;top:0;background:var(--bg-light);color:var(--text-secondary);text-align:left;padding:8px;border-bottom:1px solid var(--border);white-space:nowrap}
+    .cv-tbl td{color:var(--text-primary);padding:8px;border-bottom:1px solid var(--bg-hover);vertical-align:top}
+    .cv-tbl tbody tr.cv-row{cursor:pointer}
+    .cv-tbl tbody tr.cv-row:hover{background:var(--bg-light)}
+    .cv-hint{font-size:11.5px;color:var(--text-light);margin-top:8px}
+  `;
+  document.head.appendChild(st);
+}
+
+function cvPlain(html) {
+  const d = document.createElement('div');
+  d.innerHTML = String(html ?? '');
+  return d.textContent.replace(/\s+/g, ' ').trim();
+}
+
+function cvDownloadCsv(head, rows, fileBase) {
+  if (a4Intercept(head, rows, fileBase)) return;
+  const cell = v => {
+    const t = String(v ?? '');
+    return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  };
+  const csv = '\ufeff' + [head, ...rows].map(r => r.map(cell).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `${fileBase}_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+
+function allocKind(a) {
+  return a.allocation_type === 'spare_part' ? 'spare_part' : (a.allocation_type === 'demo_unit' ? 'demo_unit' : 'product');
+}
+
+function allocWho(a) {
+  return a.allocation_type === 'spare_part'
+    ? `Service #${(a.spare_part?.service_id || '').slice(0, 8)}`
+    : (a.sales_person?.name ?? '');
+}
+
+function allocProductHtml(a) {
+  return a.allocation_type === 'spare_part'
+    ? sparePartLabel(a.spare_part)
+    : (a.items || []).map(itemLabel).join(', ');
+}
+
+function allocSerialText(a) {
+  return a.allocation_type === 'spare_part' ? '-' : ((a.items || []).map(itemSerials).filter(Boolean).join(', ') || '-');
+}
+
+function allocStatusKey(a) {
+  const meta = returnMeta(a);
+  return meta.complete ? 'returned' : (meta.overdue ? 'overdue' : 'pending');
+}
+
+function allocCvFiltered() {
+  const f = allocCV.f;
+  const q = (f.q || '').toLowerCase();
+  if (allocCV.requests) {
+    return allocCV.base.filter(r => {
+      if (f.reqType && r.request_type !== f.reqType) return false;
+      if (f.raisedBy && r.raised_by !== f.raisedBy) return false;
+      if (q && !`${ALLOC_REQ_LABELS[r.request_type] || r.request_type || ''} ${cvPlain(requestSummary(r))} ${r.raised_by || ''}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }
+  return allocCV.base.filter(a => {
+    if (f.kind && allocKind(a) !== f.kind) return false;
+    if (f.status && allocStatusKey(a) !== f.status) return false;
+    if (f.who && allocWho(a) !== f.who) return false;
+    const d = (a.allotment_date || '').slice(0, 10);
+    if (f.from && d < f.from) return false;
+    if (f.to && d > f.to) return false;
+    if (q) {
+      const hay = [a.allocation_id, a.company_name, a.address, allocWho(a), cvPlain(allocProductHtml(a)), allocSerialText(a)].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function allocCvHead() {
+  return allocCV.requests
+    ? ['Type', 'Details', 'Raised By', 'Requested On (Date & Time)']
+    : ['Type', 'Product / Spare Part', 'Serial No.', 'Sales Person / Service', 'Allotment Date', 'Return Due', 'Status'];
+}
+
+function allocCvCells(x) {
+  if (allocCV.requests) {
+    return [esc(ALLOC_REQ_LABELS[x.request_type] || x.request_type || '-'), requestSummary(x), esc(x.raised_by || '-'),
+      fmtReqDateTime(x.created_at)];
+  }
+  const meta = returnMeta(x);
+  return [
+    ALLOC_KIND_LABELS[allocKind(x)],
+    allocProductHtml(x),
+    esc(allocSerialText(x)),
+    esc(allocWho(x)),
+    x.allotment_date ? new Date(x.allotment_date).toLocaleDateString('en-GB') : '-',
+    x.return_due_date ? new Date(x.return_due_date).toLocaleDateString('en-GB') : '-',
+    `<span class="stock ${meta.cls}">${meta.label}</span>`
+  ];
+}
+
+function allocCvPaint() {
+  const body = document.getElementById('cvBody');
+  if (!body) return;
+  const list = allocCvFiltered();
+  const cols = allocCvHead().length;
+  body.innerHTML = list.map((x, i) => `<tr class="cv-row" data-i="${i}">${allocCvCells(x).map(c => `<td>${c}</td>`).join('')}</tr>`).join('')
+    || `<tr><td colspan="${cols}" style="text-align:center;color:var(--text-light);padding:20px;">Nothing matches these filters.</td></tr>`;
+  document.getElementById('cvCount').textContent = `${list.length} of ${allocCV.base.length} record(s)`;
+  body.querySelectorAll('tr.cv-row').forEach(tr => tr.addEventListener('click', () => {
+    const x = list[Number(tr.dataset.i)];
+    const vm = document.getElementById('viewAllocationModal');
+    if (vm) vm.style.zIndex = 1100;
+    if (allocCV.requests) openRequestDetailsModal(x);
+    else openViewAllocationModal(x);
+  }));
+}
+
+function openAllocCardDetailModal(type) {
+  const modal = document.getElementById('allocCardDetailModal');
+  const box = modal.querySelector('.modal-content');
+  cvEnsureStyles();
+  const titles = { all: 'All Allocations', pending: 'Pending Return', overdue: 'Overdue Allocations', returned: 'Returned Allocations', requests: 'Pending Requests' };
+  const requests = type === 'requests';
+  allocCV.type = type;
+  allocCV.requests = requests;
+  allocCV.f = {};
+  allocCV.base = requests
+    ? allocState.requests.filter(r => r.status === 'pending').sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+    : allocCardList(type);
+  const opt = arr => arr.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  const uniq = arr => [...new Set(arr.filter(Boolean))].sort();
+
+  let bar;
+  if (requests) {
+    const types = uniq(allocCV.base.map(r => r.request_type));
+    const raised = uniq(allocCV.base.map(r => r.raised_by));
+    bar = `
+      <input type="text" data-f="q" placeholder="Search details, raised by...">
+      <select data-f="reqType"><option value="">All Types</option>${types.map(t => `<option value="${esc(t)}">${esc(ALLOC_REQ_LABELS[t] || t)}</option>`).join('')}</select>
+      <select data-f="raisedBy"><option value="">All Raised By</option>${opt(raised)}</select>`;
+  } else {
+    const whos = uniq(allocCV.base.map(allocWho));
+    bar = `
+      <input type="text" data-f="q" placeholder="Search product, serial, company, ID...">
+      <select data-f="kind"><option value="">All Types</option><option value="product">Product</option><option value="demo_unit">Demo</option><option value="spare_part">Spare Part</option></select>
+      ${type === 'all' ? '<select data-f="status"><option value="">All Status</option><option value="pending">Pending</option><option value="overdue">Overdue</option><option value="returned">Returned</option></select>' : ''}
+      <select data-f="who"><option value="">All Sales / Service</option>${opt(whos)}</select>
+      <label>Allotted</label>
+      <input type="date" data-f="from" title="From"><input type="date" data-f="to" title="To">`;
+  }
+
+  box.style.width = 'min(1100px,95vw)';
+  box.innerHTML = `
+    <div class="cv-head"><h3>${titles[type]}</h3>
+      <button class="close" style="border:none;background:none;font-size:20px;cursor:pointer;">&times;</button></div>
+    <div class="cv-bar">${bar}
+      <button class="cv-btn rst" id="cvReset">Reset</button>
+      <button class="cv-btn exp" id="cvExport"><i class="fa-solid fa-download"></i> Export CSV</button>
+    </div>
+    <p class="cv-count" id="cvCount"></p>
+    <div class="cv-wrap"><table class="cv-tbl">
+      <thead><tr>${allocCvHead().map(h => `<th>${h}</th>`).join('')}</tr></thead>
+      <tbody id="cvBody"></tbody></table></div>
+    <p class="cv-hint">Click a row to see full details.</p>`;
+
+  box.querySelector('.close').addEventListener('click', () => { modal.style.display = 'none'; });
+  box.querySelectorAll('[data-f]').forEach(el => el.addEventListener(el.type === 'text' ? 'input' : 'change', e => {
+    allocCV.f[el.dataset.f] = e.target.value;
+    allocCvPaint();
+  }));
+  box.querySelector('#cvReset').addEventListener('click', () => {
+    allocCV.f = {};
+    box.querySelectorAll('[data-f]').forEach(el => { el.value = ''; });
+    allocCvPaint();
+  });
+  a4Twin(box.querySelector('#cvExport'), titles[type]);
+  box.querySelector('#cvExport').addEventListener('click', () => {
+    const list = allocCvFiltered();
+    cvDownloadCsv(allocCvHead(), list.map(x => allocCvCells(x).map(cvPlain)), titles[type].toLowerCase().replace(/[^a-z0-9]+/g, '_'));
+  });
+  allocCvPaint();
+  modal.style.display = 'flex';
+}
+
+function wireAllocCardClicks() {
+  document.querySelectorAll('.cards .card[data-card-filter]').forEach(card => {
+    card.addEventListener('click', () => openAllocCardDetailModal(card.dataset.cardFilter));
+  });
+  const modal = document.getElementById('allocCardDetailModal');
+  modal.addEventListener('mousedown', e => { if (e.target === modal) modal.style.display = 'none'; });
+}
+
+function roleLabel(role) {
+  if (role === 'distributor') return 'Sales';
+  const r = String(role || '').replace(/_/g, ' ');
+  return r.charAt(0).toUpperCase() + r.slice(1);
+}
+
 function updateAllocationCards(allocations) {
   const values = document.querySelectorAll('.cards .card h2');
   if (!values.length) return;
@@ -438,10 +855,44 @@ function updateAllocationCards(allocations) {
 // both are shown correctly here.
 function itemLabel(i) {
   const qtyPart = (i.quantity || 1) > 1 ? ` x${i.quantity}` : '';
-  return `${i.product_name}${qtyPart}`;
+  // id + model identify exactly which variant/lot this unit came from (two
+  // products can share a name, e.g. same model in black vs grey) — shown as
+  // a small sub-line under the name, same pattern used on the Dispatch page.
+  const meta = [i.product_id, i.model_no].filter(Boolean).join(' · ');
+  const metaHtml = meta ? `<br><small style="color:#94a3b8;">${esc(meta)}</small>` : '';
+  return `${esc(i.product_name || '')}${qtyPart}${metaHtml}`;
 }
 function itemSerials(i) {
   return (i.serial_numbers || []).join(', ');
+}
+
+// Spare/service part allocations only carry the part's own name + quantity
+// (see allocation.py's spare_part shape) — not which product that part
+// belongs to. Inventory's matching spare_parts/service_parts lot DOES carry
+// that (parent_product_name), so it's looked up here from the inventory
+// list already loaded for the allocate wizard's product picker
+// (allocState.products, populated by loadInventoryForAllocation). Matched by
+// part name alone since a spare_part allocation has no product_type of its
+// own to disambiguate — first match wins.
+function sparePartParentName(partName) {
+  if (!partName) return '';
+  const needle = partName.trim().toLowerCase();
+  if (!needle) return '';
+  const match = (allocState.products || []).find(p =>
+    (p.product_type === 'spare_parts' || p.product_type === 'service_parts') &&
+    (p.product_name || '').trim().toLowerCase() === needle
+  );
+  return match?.parent_product_name || '';
+}
+
+function sparePartLabel(sp) {
+  const name = esc(sp?.part_name ?? '');
+  const qty = sp?.quantity ?? 1;
+  const parent = sparePartParentName(sp?.part_name);
+  const belongsTo = parent
+    ? `<br><small style="color:#94a3b8;">Belongs to: ${esc(parent)}</small>`
+    : '';
+  return `${name} x${qty}${belongsTo}`;
 }
 
 function renderAllocationsTable(allocations) {
@@ -461,7 +912,7 @@ function renderAllocationsTable(allocations) {
     const meta = returnMeta(a);
     const isSpare = a.allocation_type === 'spare_part';
     const productLabel = isSpare
-      ? `${a.spare_part?.part_name ?? ''} x${a.spare_part?.quantity ?? 1}`
+      ? sparePartLabel(a.spare_part)
       : (a.items || []).map(itemLabel).join(', ');
     const serialLabel = isSpare
       ? '-'
@@ -489,6 +940,10 @@ function renderAllocationsTable(allocations) {
       <td><span class="stock ${meta.cls}">${meta.label}</span></td>
       <td>
         <button class="icon-btn view-alloc-btn"><i class="fa-solid fa-eye"></i></button>
+        ${window.__allocCanEdit && !isSpare && !a.dispatch && !meta.complete
+          ? '<button class="icon-btn edit-alloc-btn" title="Edit (serial / details)"><i class="fa-solid fa-pen"></i></button>' : ''}
+        ${window.__allocCanEdit && !isSpare && !meta.complete
+          ? '<button class="icon-btn convert-alloc-btn" title="Convert to Order"><i class="fa-solid fa-file-invoice-dollar"></i></button>' : ''}
         ${!isSpare && !a.dispatch && !a.sent_to_dispatch && window.__allocCanCreate
           ? '<button class="icon-btn dispatch-alloc-btn" title="Send to Dispatch"><i class="fa-solid fa-truck-fast"></i></button>' : ''}
         ${!isSpare && a.sent_to_dispatch && !a.dispatch
@@ -502,6 +957,8 @@ function renderAllocationsTable(allocations) {
   });
 
   tbody.querySelectorAll('.view-alloc-btn').forEach(btn => btn.addEventListener('click', e => openViewAllocationModal(rowAllocation(e))));
+  tbody.querySelectorAll('.edit-alloc-btn').forEach(btn => btn.addEventListener('click', e => openEditAllocationModal(rowAllocation(e))));
+  tbody.querySelectorAll('.convert-alloc-btn').forEach(btn => btn.addEventListener('click', e => openConvertAllocationModal(rowAllocation(e))));
   tbody.querySelectorAll('.dispatch-alloc-btn').forEach(btn => btn.addEventListener('click', e => sendToDispatch(rowAllocation(e))));
   tbody.querySelectorAll('.return-alloc-btn').forEach(btn => btn.addEventListener('click', e => openReturnModal(rowAllocation(e))));
   tbody.querySelectorAll('.damage-report-btn').forEach(btn => btn.addEventListener('click', e => openDamageReportModal(rowAllocation(e))));
@@ -540,6 +997,8 @@ function rowAllocation(e) {
 function openReturnModal(a) {
   if (!a) return;
   const isSpare = a.allocation_type === 'spare_part';
+  // plain text only here — this goes into a native confirm() dialog, which
+  // can't render the <br><small> markup itemLabel/sparePartLabel use elsewhere
   const label = isSpare
     ? `${a.spare_part?.part_name ?? ''} x${a.spare_part?.quantity ?? 1}`
     : (a.items || []).map(i => `${i.product_name}${itemSerials(i) ? ' (SN: ' + itemSerials(i) + ')' : ''}`).join(', ');
@@ -567,15 +1026,18 @@ function openViewAllocationModal(a) {
 
   const itemsHtml = isSpare
     ? `<div class="detail"><small>Spare Part</small><p>${a.spare_part?.part_name ?? ''} x${a.spare_part?.quantity ?? 1}</p></div>
+       ${detailRow('Belongs To', sparePartParentName(a.spare_part?.part_name))}
        <div class="detail"><small>Service ID</small><p>${a.spare_part?.service_id ?? ''}</p></div>`
-    : `<div class="detail"><small>Products</small><p>${(a.items || []).map(i => {
-         const idModel = [i.product_id, i.model_no].filter(Boolean).join(' · ');
-         return `${i.product_name}${idModel ? ' (' + idModel + ')' : ''} x${i.quantity}${i.serial_numbers?.length ? ' — SN: ' + i.serial_numbers.join(', ') : ''}`;
-       }).join('<br>')}</p></div>
-       <div class="detail"><small>Sales Person</small><p>${a.sales_person?.name ?? ''} — ${a.sales_person?.contact_number ?? ''}</p></div>
-       <div class="detail"><small>Company / Address</small><p>${a.company_name ?? ''}, ${a.address ?? ''}</p></div>
-       ${a.remarks ? `<div class="detail"><small>Remarks</small><p>${esc(a.remarks)}</p></div>` : ''}`;
+    : `${(a.items || []).map(i => itemDetailBlock(i, false)).join('')}
+       ${a.allocation_type === 'demo_unit'
+         ? customerDetailBlock(a.customer) + detailRow('Distributor', a.allocated_by)
+         : detailRow('Sales Person', [a.sales_person?.name, a.sales_person?.contact_number].filter(Boolean).join(' — '))
+           + detailRow('Company', a.company_name) + detailRow('Address', a.address)
+           + detailRow('GST No.', a.gst_number) + detailRow('Phone', a.phone_number)}
+       ${a.convert_request?.price ? detailRow('Requested Order Price', '₹' + a.convert_request.price + (a.convert_request.tax_rate ? ` (+${a.convert_request.tax_rate}% tax)` : '')) : ''}
+       ${detailRow('Remarks', a.remarks)}`;
 
+  content.style.maxHeight = '86vh'; content.style.overflowY = 'auto';
   content.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
       <h3>Allocation Details</h3>
@@ -591,6 +1053,212 @@ function openViewAllocationModal(a) {
     <div class="detail"><small>Status</small><p>${meta.label}</p></div>`;
 
   content.querySelector('.close').addEventListener('click', () => modal.style.display = 'none');
+  modal.style.display = 'flex';
+}
+
+// ---------- Edit allocation (serial number swap + details) ----------
+async function openEditAllocationModal(a) {
+  if (!a) return;
+  const modal = document.getElementById('viewAllocationModal');
+  const content = modal.querySelector('.modal-content');
+  content.style.maxHeight = '86vh'; content.style.overflowY = 'auto';
+  const items = a.items || [];
+  const it = items.length === 1 ? items[0] : null;
+  const qty = it ? Math.max(1, Number(it.quantity) || (it.serial_numbers || []).length || 1) : 0;
+  const current = it ? (it.serial_numbers || []) : [];
+  const isDemo = a.allocation_type === 'demo_unit';
+  const inp = 'width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:8px;';
+
+  content.innerHTML = '<p style="padding:20px;color:#64748b;">Loading available serial numbers…</p>';
+  modal.style.display = 'flex';
+
+  let available = [];
+  if (it) {
+    try {
+      const res = await apiFetch(`/inventory/available_serials?product_id=${encodeURIComponent(it.product_id || '')}&model_no=${encodeURIComponent(it.model_no || '')}`);
+      if (res.ok) available = (await res.json()).serial_numbers || [];
+    } catch (e) { /* picker just shows current serial */ }
+  }
+  const options = [...current, ...available.filter(x => !current.includes(x))];
+
+  const serialSelects = it ? Array.from({ length: qty }, (_, k) => `
+      <select class="editSerial" style="${inp}margin-bottom:6px;">
+        ${current[k] ? '' : '<option value="">— select serial —</option>'}
+        ${options.map(x => `<option value="${esc(x)}" ${x === current[k] ? 'selected' : ''}>${esc(x)}${x === current[k] ? ' (current)' : ''}</option>`).join('')}
+      </select>`).join('') : '';
+
+  content.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <h3>Edit Allocation</h3>
+      <button class="close" style="border:none;background:none;font-size:20px;cursor:pointer;">&times;</button>
+    </div>
+    ${items.map(i => itemDetailBlock(i, false)).join('')}
+    ${it ? `<div class="detail"><small>Serial Number(s) — ${available.length} other available in inventory</small>${serialSelects}
+      <p style="font-size:12px;color:#64748b;">The new serial is deducted from inventory; the old one goes back to inventory.</p></div>` : ''}
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">
+      ${isDemo ? '' : `
+      <input id="editCompany" placeholder="Company Name" value="${esc(a.company_name || '')}" style="${inp}">
+      <input id="editAddress" placeholder="Address" value="${esc(a.address || '')}" style="${inp}">
+      <input id="editGst" placeholder="GST Number" value="${esc(a.gst_number || '')}" style="${inp}">
+      <input id="editPhone" placeholder="Phone Number" value="${esc(a.phone_number || '')}" style="${inp}">`}
+      <input id="editRemarks" placeholder="Remarks" value="${esc(a.remarks || '')}" style="${inp}">
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:14px;">
+      <button type="button" id="editCancel" style="padding:10px 16px;border:none;border-radius:8px;background:#e5e7eb;cursor:pointer;">Cancel</button>
+      <button type="button" id="editSave" style="padding:10px 16px;border:none;border-radius:8px;background:#1665ff;color:#fff;cursor:pointer;">Save Changes</button>
+    </div>`;
+
+  const close = () => modal.style.display = 'none';
+  content.querySelector('.close').addEventListener('click', close);
+  document.getElementById('editCancel').addEventListener('click', close);
+  document.getElementById('editSave').addEventListener('click', async () => {
+    const body = { remarks: document.getElementById('editRemarks').value };
+    if (!isDemo) {
+      body.company_name = document.getElementById('editCompany').value;
+      body.address = document.getElementById('editAddress').value;
+      body.gst_number = document.getElementById('editGst').value;
+      body.phone_number = document.getElementById('editPhone').value;
+    }
+    if (it) {
+      const picked = [...content.querySelectorAll('.editSerial')].map(sel => sel.value);
+      const filled = picked.filter(Boolean);
+      if (filled.length && filled.length !== qty) return alert('Select a serial number for every unit.');
+      if (new Set(filled).size !== filled.length) return alert('Serial numbers must be different.');
+      if (filled.length && JSON.stringify(filled) !== JSON.stringify(current)) body.serial_numbers = filled;
+    }
+    try {
+      const res = await apiFetch(`/allocation/edit/${a.allocation_id}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'update failed');
+      close();
+      await loadAllocations();
+      alert(data.message || 'Allocation updated');
+    } catch (err) {
+      if (err.message !== 'unauthorized' && err.message !== 'forbidden') alert(err.message);
+    }
+  });
+}
+
+// ---------- Convert a dispatched demo unit straight into an order ----------
+// The company is picked from the companies already on file (Users → Companies);
+// "Create new company" is still there for a customer that is not registered yet.
+async function openConvertAllocationModal(a) {
+  if (!a) return;
+  const modal = document.getElementById('viewAllocationModal');
+  const content = modal.querySelector('.modal-content');
+  content.style.maxHeight = '86vh'; content.style.overflowY = 'auto';
+
+  let companies = [];
+  try {
+    const r = await apiFetch('/customer/company_list');
+    if (r.ok) companies = (await r.json()).dataset || [];
+  } catch (e) { companies = []; }
+
+  const c = a.customer || {};
+  const today = new Date().toISOString().slice(0, 10);
+  const inp = 'width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:8px;';
+  const norm = v => String(v || '').trim().toLowerCase();
+  // pre-select the company the demo was allotted against, if it is already registered
+  const preset = companies.find(x => c.customer_id && x.customer_id === c.customer_id)
+    || companies.find(x => norm(x.company_name) && norm(x.company_name) === norm(c.company_name));
+  const st = {
+    customerId: preset ? preset.customer_id : '',
+    company: c.company_name || '', address: c.company_address || c.address || '', gst: c.gst_number || '',
+    price: a.convert_request?.price || '', tax: a.convert_request?.tax_rate || '', invNo: '', invDate: today,
+  };
+
+  const draw = () => {
+    const picked = companies.find(x => x.customer_id === st.customerId);
+    content.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h3>Convert to Order</h3>
+        <button class="close" style="border:none;background:none;font-size:20px;cursor:pointer;">&times;</button>
+      </div>
+      ${(a.items || []).map(i => itemDetailBlock(i, false)).join('')}
+      <p style="font-size:12px;color:#64748b;margin-bottom:8px;">Pick the customer's company. The demo unit moves to Orders (stock is not changed again).</p>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <select id="cvPick" style="${inp}">
+          <option value="">➕ Create new company</option>
+          ${companies.map(x => `<option value="${esc(x.customer_id)}" ${x.customer_id === st.customerId ? 'selected' : ''}>${esc(x.company_name)}</option>`).join('')}
+        </select>
+        ${picked ? `
+          <div style="background:#f8fafc;border-radius:10px;padding:10px;font-size:13px;color:#475569;">
+            <div><strong>${esc(picked.company_name)}</strong></div>
+            <div>${esc(picked.company_address) || '—'}</div>
+            <div>GST: ${esc(picked.gst_number) || '—'}${picked.contractor_person ? ' • ' + esc(picked.contractor_person) : ''} ${esc(picked.contractor_number || '')}</div>
+          </div>` : `
+          <input id="cvCompany" placeholder="Company Name *" value="${esc(st.company)}" style="${inp}">
+          <input id="cvAddress" placeholder="Company Address *" value="${esc(st.address)}" style="${inp}">
+          <input id="cvGst" placeholder="GST Number" value="${esc(st.gst)}" style="${inp}">`}
+        <input id="cvPrice" type="number" min="0" step="any" placeholder="Price per unit (₹) *" value="${esc(st.price)}" style="${inp}">
+        <input id="cvTax" type="number" min="0" step="any" placeholder="Tax Rate (%)" value="${esc(st.tax)}" style="${inp}">
+        <input id="cvInvNo" placeholder="Invoice Number *" value="${esc(st.invNo)}" style="${inp}">
+        <input id="cvInvDate" type="date" value="${esc(st.invDate)}" style="${inp}">
+        ${convPayHtml(st.payMode)}
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:14px;">
+        <button type="button" id="cvCancel" style="padding:10px 16px;border:none;border-radius:8px;background:#e5e7eb;cursor:pointer;">Cancel</button>
+        <button type="button" id="cvSave" style="padding:10px 16px;border:none;border-radius:8px;background:#16a34a;color:#fff;cursor:pointer;">Create Order</button>
+      </div>`;
+    wire();
+  };
+
+  // keep what was typed when the company choice switches between "existing" and "new"
+  const readFields = () => {
+    const v = id => { const el = document.getElementById(id); return el ? el.value.trim() : null; };
+    for (const [key, id] of [['company', 'cvCompany'], ['address', 'cvAddress'], ['gst', 'cvGst'], ['price', 'cvPrice'], ['tax', 'cvTax'], ['invNo', 'cvInvNo'], ['invDate', 'cvInvDate'], ['payMode', 'cvPayMode']]) {
+      const val = v(id);
+      if (val !== null) st[key] = val;
+    }
+  };
+
+  // order total (incl. tax) from the price / tax currently typed in the form and this unit's quantities
+  const getTotal = () => {
+    const price = Number(document.getElementById('cvPrice')?.value) || 0;
+    const tax = Number(document.getElementById('cvTax')?.value) || 0;
+    const qty = (a.items || []).reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+    return Math.round(price * qty * (1 + tax / 100) * 100) / 100;
+  };
+
+  const wire = () => {
+    const close = () => modal.style.display = 'none';
+    content.querySelector('.close').addEventListener('click', close);
+    document.getElementById('cvCancel').addEventListener('click', close);
+    convPayWire(getTotal);
+    document.getElementById('cvPick').addEventListener('change', e => { readFields(); st.customerId = e.target.value; draw(); });
+    document.getElementById('cvSave').addEventListener('click', async () => {
+      readFields();
+      const picked = companies.find(x => x.customer_id === st.customerId);
+      const body = {
+        customer_id: picked ? picked.customer_id : '',
+        company_name: picked ? picked.company_name : st.company,
+        company_address: picked ? (picked.company_address || '') : st.address,
+        gst_number: picked ? (picked.gst_number || '') : st.gst,
+        price: Number(st.price) || 0, tax_rate: Number(st.tax) || 0,
+        invoice_no: st.invNo, invoice_date: st.invDate,
+      };
+      if (!picked && (!body.company_name || !body.company_address)) return alert('Select a company, or enter the new company name and address.');
+      if (body.price <= 0) return alert('Enter a valid price.');
+      if (!body.invoice_no || !body.invoice_date) return alert('Invoice number and date are required.');
+      try { Object.assign(body, convPayRead(getTotal)); } catch (err) { return alert(err.message); }
+      try {
+        const res = await apiFetch(`/allocation/convert_to_order_direct/${a.allocation_id}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'conversion failed');
+        close();
+        await loadAllocations();
+        alert(`${data.message}\nOrder ID: ${data.order_id}`);
+      } catch (err) {
+        if (err.message !== 'unauthorized' && err.message !== 'forbidden') alert(err.message);
+      }
+    });
+  };
+
+  draw();
   modal.style.display = 'flex';
 }
 
@@ -706,6 +1374,7 @@ function wireTopActions() {
   // dispatch; admin/accounts/distributor/service_manager can return or
   // report damage.
   const role = getRole();
+  window.__allocCanEdit = role === 'admin' || role === 'accounts';
   window.__allocCanCreate = role === 'admin' || role === 'accounts' || role === 'service_manager';
   window.__allocCanReturnOrDamage = role === 'admin' || role === 'accounts' || role === 'distributor' || role === 'service_manager';
   if (!window.__allocCanCreate) {
@@ -735,19 +1404,20 @@ function exportAllocationsCSV() {
     dateLabel: 'Allotment Date',
     personOptions: uniqueSalesPersonNames(),
     personField: 'sales_person.name',
-    getRows: () => allocState.allocations,
+    withTypeFilter: true,
+    getRows: getFilteredAllocations,
     onConfirm: (rows) => {
       const header = ['Allocation ID', 'Type', 'Product/Spare Part', 'Sales Person/Service', 'Serial_no.' ,'Allotment Date', 'Return Due', 'Created By', 'Returned By', 'Returned On', 'Status'];
       const csvRows = rows.map(a => {
         const isSpare = a.allocation_type === 'spare_part';
         return [
           a.allocation_id,
-          isSpare ? 'Spare Part' : 'Product',
-          isSpare ? `${a.spare_part?.part_name} x${a.spare_part?.quantity}` : (a.items || []).map(i => `${i.product_name} x${i.quantity}`).join(' | '),
+          ALLOC_KIND_LABELS[allocKind(a)],
+          isSpare ? `${a.spare_part?.part_name} x${a.spare_part?.quantity}` : (a.items || []).map(i => `${reqItemLabel(i)} x${i.quantity}`).join(' | '),
           isSpare ? a.spare_part?.service_id : a.sales_person?.name,
-          a.serial_numbers,
-          a.allotment_date,
-          a.return_due_date,
+          isSpare ? '' : (a.items || []).map(itemSerials).filter(Boolean).join('; '),
+          a.allotment_date ? new Date(a.allotment_date).toLocaleDateString('en-GB') : '',
+          a.return_due_date ? new Date(a.return_due_date).toLocaleDateString('en-GB') : '',
           a.created_by || a.allocated_by || '',
           a.returned_by || '',
           returnedOn(a) || '',
@@ -761,7 +1431,9 @@ function exportAllocationsCSV() {
 
 // ---------- Generic export filter wizard (status + date range, then CSV of only the matching rows) ----------
 function downloadCSV(header, rows, filename) {
-  const csv = [header, ...rows].map(r => r.join(',')).join('\n');
+  if (a4Intercept(header, rows, filename)) return;
+  const q = v => { const t = String(v ?? ''); return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+  const csv = '\ufeff' + [header, ...rows].map(r => r.map(q).join(',')).join('\r\n');
   const blob = new Blob([csv], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -769,7 +1441,7 @@ function downloadCSV(header, rows, filename) {
   a.click();
 }
 
-function openExportWizard({ title, statusOptions, statusField, dateField, dateLabel, personOptions, personField, getRows, onConfirm }) {
+function openExportWizard({ title, statusOptions, statusField, dateField, dateLabel, personOptions, personField, withTypeFilter, getRows, onConfirm }) {
   const field = statusField || 'status';
   let modal = document.getElementById('exportWizardModal');
   if (!modal) {
@@ -785,7 +1457,15 @@ function openExportWizard({ title, statusOptions, statusField, dateField, dateLa
         <h3>${title}</h3>
         <button class="close" style="border:none;background:none;font-size:20px;cursor:pointer;">&times;</button>
       </div>
+      <p style="font-size:12px;color:var(--text-muted);margin:-6px 0 12px;">${getRows().length} record(s) match the filters currently applied on this page. The options below narrow it further.</p>
       <form id="exportWizardForm" style="display:flex;flex-direction:column;gap:10px;">
+        ${withTypeFilter ? `
+        <label style="font-size:13px;color:#64748b;">What to export</label>
+        <select name="kind" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;">
+          <option value="both">Both (spare parts + demo products)</option>
+          <option value="spare">Spare parts only</option>
+          <option value="demo">Demo products only</option>
+        </select>` : ''}
         ${statusOptions ? `
         <label style="font-size:13px;color:#64748b;">Status</label>
         <select name="status" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;">
@@ -810,6 +1490,7 @@ function openExportWizard({ title, statusOptions, statusField, dateField, dateLa
       </form>
     </div>`;
 
+  a4WizardPrint(modal, title);
   modal.querySelector('.close').addEventListener('click', () => modal.style.display = 'none');
   modal.querySelector('.cancel-btn').addEventListener('click', () => modal.style.display = 'none');
   modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
@@ -819,10 +1500,13 @@ function openExportWizard({ title, statusOptions, statusField, dateField, dateLa
     const fd = new FormData(e.target);
     const status = fd.get('status');
     const person = fd.get('person');
+    const kind = fd.get('kind') || 'both';
     const dateFrom = fd.get('dateFrom');
     const dateTo = fd.get('dateTo');
 
     const filtered = getRows().filter(row => {
+      if (kind === 'spare' && row.allocation_type !== 'spare_part') return false;
+      if (kind === 'demo' && row.allocation_type === 'spare_part') return false;
       if (status && row[field] !== status) return false;
       // "All" (empty) keeps every allocation type; picking a name only keeps
       // that sales person's product allocations (spare parts/demo units have
@@ -935,7 +1619,7 @@ async function renderSystemUserStep() {
   const body = allocModalBody();
   allocWizTitle('Select User');
   body.innerHTML = `
-    <input id="spSearch" placeholder="Search user" style="width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:10px;">
+    <input id="spSearch" placeholder="Search by name, username or role (e.g. Sales)" style="width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:10px;">
     <div id="spResults" style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;"></div>
     <div style="margin-top:14px;">
       <button type="button" id="backSp1" style="padding:10px 16px;border-radius:8px;border:none;background:#e5e7eb;cursor:pointer;">Back</button>
@@ -956,12 +1640,15 @@ async function renderSystemUserStep() {
   }
   const draw = () => {
     const term = searchInput.value.trim().toLowerCase();
-    const list = users.filter(u => `${u.name || ''} ${u.username || ''} ${u.role || ''}`.toLowerCase().includes(term));
+    const list = users.filter(u => `${u.name || ''} ${u.username || ''} ${u.role || ''} ${roleLabel(u.role)}`.toLowerCase().includes(term));
     if (!list.length) { resultsBox.innerHTML = '<small style="color:#94a3b8;">No users found.</small>'; return; }
     resultsBox.innerHTML = list.map(u => `
       <div class="sp-row" data-username="${u.username}" style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;cursor:pointer;">
-        <strong>${u.name || u.username}</strong><br>
-        <small style="color:#64748b;">${u.username} • ${u.role ?? ''}</small>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+          <strong>${u.name || u.username}</strong>
+          <span style="font-size:11px;font-weight:600;color:#1665ff;background:#eef3fb;border-radius:999px;padding:2px 10px;">${roleLabel(u.role)}</span>
+        </div>
+        <small style="color:#64748b;">${u.username}</small>
       </div>`).join('');
     resultsBox.querySelectorAll('.sp-row').forEach(row => row.addEventListener('click', () => {
       const u = users.find(x => x.username === row.dataset.username);

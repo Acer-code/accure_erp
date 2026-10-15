@@ -1,4 +1,14 @@
-const svcState = { services: [], orders: [], activeServiceId: null, technicians: [], hologramPool: [] };
+/* ---- A4 print support: print_a4.js is loaded on demand (safe if it is missing) ---- */
+(function () { if (typeof A4Print === 'undefined' && !document.getElementById('a4printjs')) { const s = document.createElement('script'); s.id = 'a4printjs'; s.src = 'print_a4.js'; document.head.appendChild(s); } })();
+function a4Ready(cb, n) { n = n || 0; if (typeof A4Print !== 'undefined') return cb(); if (n < 50) setTimeout(() => a4Ready(cb, n + 1), 200); }
+function a4Intercept(head, rows, name) { return typeof A4Print !== 'undefined' && A4Print.intercept(head, rows, name); }
+function a4WizardPrint(modal, title) { if (typeof A4Print !== 'undefined') A4Print.wizardPrint(modal, title); }
+function a4Twin(btn, title) { if (btn) a4Ready(() => A4Print.attachTwin(btn, title)); }
+const svcState = { services: [], orders: [], activeServiceId: null, assignees: [], hologramPool: [], search: '', filters: null };
+
+function esc(v) {
+  return String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 function readFileAsBase64(file) {
   return new Promise((resolve, reject) => {
@@ -15,6 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
   wireFilters();
   wireModals();
   wireHeaderSearch();
+  wireServiceCardClicks();
   populateTechnicianFilter();
   loadAvailableHologramParts();
 });
@@ -39,35 +50,47 @@ function wireHeaderSearch() {
   const input = document.querySelector('.search input');
   if (!input) return;
   input.addEventListener('input', () => {
-    const q = input.value.trim().toLowerCase();
-    if (!q) { renderServiceTable(svcState.services); return; }
-    const filtered = svcState.services.filter(s =>
+    svcState.search = input.value.trim().toLowerCase();
+    renderServiceTable(getFilteredServices());
+  });
+}
+
+function getFilteredServices() {
+  let list = svcState.services;
+  const q = svcState.search;
+  if (q) {
+    list = list.filter(s =>
       (s.serial_no || '').toLowerCase().includes(q) ||
       (s.product_id || '').toLowerCase().includes(q) ||
-      (s.product_name || '').toLowerCase().includes(q) ||
+      serviceProductInfo(s).name.toLowerCase().includes(q) ||
+      serviceProductInfo(s).model.toLowerCase().includes(q) ||
       (s.service_id || '').toLowerCase().includes(q)
     );
-    renderServiceTable(filtered);
-  });
+  }
+  const f = svcState.filters;
+  if (f) {
+    list = list.filter(s =>
+      (!f.status || s.status === f.status) &&
+      (!f.technician || s.technician_alloted === f.technician) &&
+      (!f.date || s.purchase_date === f.date)
+    );
+  }
+  return list;
+}
+
+// every assignable person (all users except admin) as flat options — no role grouping/labels
+function assigneeOptionsHtml(placeholder) {
+  return `<option value="">${placeholder}</option>` + svcState.assignees
+    .map(u => `<option value="${esc(u.username)}">${esc(u.username)}${u.name && u.name !== u.username ? ' — ' + esc(u.name) : ''}</option>`)
+    .join('');
 }
 
 async function populateTechnicianFilter() {
   const select = document.querySelectorAll('.filter-box select')[1];
   if (!select) return;
-  const { technicians, distributors } = await loadTechnicians();
+  await loadAssignees();
   const current = select.value;
-  let html = '<option value="">Technician</option>';
-  if (technicians.length) {
-    html += '<optgroup label="Technicians">' +
-      technicians.map(t => `<option value="${t.username}">${t.username}${t.name ? ' — ' + t.name : ''}</option>`).join('') +
-      '</optgroup>';
-  }
-  if (distributors.length) {
-    html += '<optgroup label="Distributors">' +
-      distributors.map(d => `<option value="${d.username}">${d.username}${d.name ? ' — ' + d.name : ''}</option>`).join('') +
-      '</optgroup>';
-  }
-  select.innerHTML = html;
+  select.innerHTML = assigneeOptionsHtml('Technician');
   if (current && [...select.options].some(o => o.value === current)) select.value = current;
 }
 
@@ -83,7 +106,7 @@ async function loadServices() {
 
     svcState.services = (svcData.dataset || []).slice().reverse();
     svcState.orders = orderData.dataset || [];
-    renderServiceTable(svcState.services);
+    renderServiceTable(getFilteredServices());
     updateCards(svcState.services);
   } catch (err) {
     console.error(err);
@@ -93,22 +116,92 @@ async function loadServices() {
   }
 }
 
-async function loadTechnicians() {
+// Everyone except admins can be assigned a service. /account/users lists all accounts
+// (admin / accounts / service_manager may call it); if that is refused, fall back to the
+// technician + distributor lists so the dropdown is never empty.
+async function loadAssignees() {
+  let list = [];
   try {
-    const [techRes, distRes] = await Promise.all([
-      apiFetch('/account/technicians'),
-      apiFetch('/account/distributors')
-    ]);
-    const techData = techRes.ok ? await techRes.json() : { dataset: [] };
-    const distData = distRes.ok ? await distRes.json() : { dataset: [] };
-    svcState.technicians = techData.dataset || [];
-    svcState.distributors = distData.dataset || [];
+    const res = await apiFetch('/account/users');
+    if (res.ok) {
+      list = ((await res.json()).dataset || []).filter(u => u.username && u.role !== 'admin');
+    } else {
+      const [t, d] = await Promise.all([apiFetch('/account/technicians'), apiFetch('/account/distributors')]);
+      const tech = t.ok ? (await t.json()).dataset || [] : [];
+      const dist = d.ok ? (await d.json()).dataset || [] : [];
+      list = [...tech, ...dist].filter(u => u.username);
+    }
   } catch (err) {
     console.error(err);
-    svcState.technicians = [];
-    svcState.distributors = [];
   }
-  return { technicians: svcState.technicians, distributors: svcState.distributors };
+  const seen = new Set();
+  svcState.assignees = list
+    .filter(u => !seen.has(u.username) && seen.add(u.username))
+    .sort((x, y) => x.username.localeCompare(y.username));
+  return svcState.assignees;
+}
+
+// Product ID is a fixed blank value now (see DEFAULT_PRODUCT_ID below), so it
+// can't identify an order line any more — only match on it when it has content.
+const hasRealProductId = s => !!String(s.product_id ?? '').trim();
+
+function findOrderItemForService(s) {
+  const items = svcState.orders.flatMap(o => o.items || []);
+  return (s.serial_no && items.find(it => (it.serial_numbers || []).includes(s.serial_no)))
+    || (hasRealProductId(s) ? items.find(it => it.product_id === s.product_id) : null)
+    || null;
+}
+
+function serviceProductInfo(s) {
+  const it = findOrderItemForService(s) || {};
+  return { name: s.product_name || it.product_name || '-', model: s.model_no || it.model_no || '-' };
+}
+
+function serviceCardList(type) {
+  if (type === 'all') return svcState.services;
+  return svcState.services.filter(s => s.status === type);
+}
+
+function openServiceCardDetailModal(type) {
+  const titles = { all: 'All Services', active: 'Active Services', in_progress: 'In Progress Services', completed: 'Completed Services', rejected: 'Rejected Services' };
+  const list = serviceCardList(type);
+  const th = 'style="text-align:left;padding:8px;"';
+  const td = 'style="padding:8px;border-top:1px solid var(--border);"';
+  const head = ['Product Name', 'Product ID', 'Model No.', 'Serial No.', 'Technician', 'Status', 'Listed On'];
+  const box = document.querySelector('#serviceCardDetailModal .modal-content');
+  box.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <h3>${titles[type]} <span style="color:var(--text-light);font-weight:400;">(${list.length})</span></h3>
+      <button class="close" style="border:none;background:none;font-size:20px;cursor:pointer;">&times;</button>
+    </div>
+    <div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px;">
+      <table style="width:100%;font-size:13px;border-collapse:collapse;">
+        <thead style="background:var(--bg-light);"><tr>${head.map(h => `<th ${th}>${h}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${list.map(s => {
+            const info = serviceProductInfo(s);
+            return `<tr>
+              <td ${td}>${info.name}</td>
+              <td ${td}>${s.product_id ?? ''}</td>
+              <td ${td}>${info.model}</td>
+              <td ${td}>${s.serial_no ?? ''}</td>
+              <td ${td}>${s.technician_alloted ?? ''}</td>
+              <td ${td}><span class="${statusBadge(s.status)}">${(s.status ?? '').replace('_', ' ')}</span></td>
+              <td ${td}>${s.created_at ? new Date(s.created_at).toLocaleDateString('en-GB') : '-'}</td>
+            </tr>`;
+          }).join('') || `<tr><td colspan="${head.length}" style="text-align:center;color:var(--text-light);padding:24px;">Nothing to show</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+  box.querySelector('.close').addEventListener('click', () => { document.getElementById('serviceCardDetailModal').style.display = 'none'; });
+  document.getElementById('serviceCardDetailModal').style.display = 'flex';
+}
+
+function wireServiceCardClicks() {
+  document.querySelectorAll('.cards .card[data-card-filter]').forEach(card => {
+    card.addEventListener('click', () => openServiceCardDetailModal(card.dataset.cardFilter));
+  });
 }
 
 function updateCards(services) {
@@ -129,9 +222,9 @@ function statusBadge(status) {
 // finds the order this service's product belongs to by searching each order's
 // line items (orders store items[].serial_numbers, not a top-level serial_no)
 function findOrderForService(s) {
-  if (!s.serial_no) return svcState.orders.find(o => (o.items || []).some(it => it.product_id === s.product_id));
+  if (!s.serial_no) return hasRealProductId(s) ? svcState.orders.find(o => (o.items || []).some(it => it.product_id === s.product_id)) : undefined;
   return svcState.orders.find(o => (o.items || []).some(it => (it.serial_numbers || []).includes(s.serial_no)))
-      || svcState.orders.find(o => (o.items || []).some(it => it.product_id === s.product_id));
+      || (hasRealProductId(s) ? svcState.orders.find(o => (o.items || []).some(it => it.product_id === s.product_id)) : undefined);
 }
 
 // warranty = manual override (warranty_until) if admin/employee set one, else order_date + 365 days
@@ -182,8 +275,9 @@ function renderServiceTable(services) {
       : `<span class="${s.manager_confirmed_return ? 'confirmed' : 'pending'}">${s.manager_confirmed_return ? 'Confirmed' : 'Pending'}</span>`;
 
     tr.innerHTML = `
-      <td>#${s.service_id?.slice(0, 8) ?? ''}</td>
+      <td>${serviceProductInfo(s).name}</td>
       <td>${s.product_id ?? ''}</td>
+      <td>${serviceProductInfo(s).model}</td>
       <td>${s.serial_no ?? ''}</td>
       <td><div class="tech">${s.technician_alloted ?? ''}</div></td>
       <td>${s.issue ?? ''}</td>
@@ -235,7 +329,7 @@ function openActionMenu(s, evt) {
     const btn = document.createElement('button');
     btn.textContent = item.label;
     btn.style.cssText = 'display:block;width:100%;text-align:left;padding:9px 12px;border:none;background:none;border-radius:6px;cursor:pointer;font-size:14px;';
-    btn.onmouseenter = () => btn.style.background = '#f1f5f9';
+    btn.onmouseenter = () => btn.style.background = 'var(--bg-hover)';
     btn.onmouseleave = () => btn.style.background = 'none';
     btn.addEventListener('click', () => { closeActionMenu(); item.action(); });
     menu.appendChild(btn);
@@ -355,10 +449,10 @@ function exportServicesCSV() {
     statusOptions: ['active', 'in_progress', 'completed', 'rejected'],
     dateField: 'purchase_date',
     dateLabel: 'Purchase Date',
-    getRows: () => svcState.services,
+    getRows: getFilteredServices,
     onConfirm: (rows) => {
-      const header = ['Service ID', 'Product ID', 'Serial No', 'Technician', 'Issue', 'Location', 'Status', 'Created By', 'Listed On'];
-      const csvRows = rows.map(s => [s.service_id, s.product_id, s.serial_no, s.technician_alloted, s.issue, s.location, s.status, s.created_by || '', s.created_at ? new Date(s.created_at).toLocaleDateString('en-GB') : '']);
+      const header = ['Service ID', 'Product', 'Product ID', 'Model', 'Serial No', 'Technician', 'Issue', 'Location', 'Warranty Until', 'Status', 'Created By', 'Listed On'];
+      const csvRows = rows.map(s => [s.service_id, serviceProductInfo(s).name, s.product_id, serviceProductInfo(s).model, s.serial_no, s.technician_alloted, s.issue, s.location, s.warranty_until || '', s.status, s.created_by || '', s.created_at ? new Date(s.created_at).toLocaleDateString('en-GB') : '']);
       downloadCSV(header, csvRows, 'services.csv');
     }
   });
@@ -366,7 +460,9 @@ function exportServicesCSV() {
 
 // ---------- Generic export filter wizard (status + date range, then CSV of only the matching rows) ----------
 function downloadCSV(header, rows, filename) {
-  const csv = [header, ...rows].map(r => r.join(',')).join('\n');
+  if (a4Intercept(header, rows, filename)) return;
+  const q = v => { const t = String(v ?? ''); return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+  const csv = '\ufeff' + [header, ...rows].map(r => r.map(q).join(',')).join('\r\n');
   const blob = new Blob([csv], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -389,25 +485,27 @@ function openExportWizard({ title, statusOptions, dateField, dateLabel, getRows,
         <h3>${title}</h3>
         <button class="close" style="border:none;background:none;font-size:20px;cursor:pointer;">&times;</button>
       </div>
+      <p style="font-size:12px;color:var(--text-muted);margin:-6px 0 12px;">${getRows().length} record(s) match the filters currently applied on this page. The options below narrow it further.</p>
       <form id="exportWizardForm" style="display:flex;flex-direction:column;gap:10px;">
         ${statusOptions ? `
-        <label style="font-size:13px;color:#64748b;">Status</label>
-        <select name="status" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;">
+        <label style="font-size:13px;color:var(--text-muted);">Status</label>
+        <select name="status" style="padding:10px;border:1px solid var(--border);border-radius:8px;">
           <option value="">All Statuses</option>
           ${statusOptions.map(s => `<option value="${s}">${s.replace('_', ' ')}</option>`).join('')}
         </select>` : ''}
         ${dateField ? `
-        <label style="font-size:13px;color:#64748b;">${dateLabel || 'Date'} From</label>
+        <label style="font-size:13px;color:var(--text-muted);">${dateLabel || 'Date'} From</label>
         <input type="date" name="dateFrom">
-        <label style="font-size:13px;color:#64748b;">${dateLabel || 'Date'} To</label>
+        <label style="font-size:13px;color:var(--text-muted);">${dateLabel || 'Date'} To</label>
         <input type="date" name="dateTo">` : ''}
         <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:10px;">
-          <button type="button" class="cancel-btn" style="padding:10px 16px;border:none;border-radius:8px;background:#eee;cursor:pointer;">Cancel</button>
-          <button type="submit" style="padding:10px 16px;border:none;border-radius:8px;background:#1665ff;color:#fff;cursor:pointer;">Export</button>
+          <button type="button" class="cancel-btn" style="padding:10px 16px;border:none;border-radius:8px;background:var(--border);cursor:pointer;">Cancel</button>
+          <button type="submit" style="padding:10px 16px;border:none;border-radius:8px;background:var(--primary);color:#fff;cursor:pointer;">Export</button>
         </div>
       </form>
     </div>`;
 
+  a4WizardPrint(modal, title);
   modal.querySelector('.close').addEventListener('click', () => modal.style.display = 'none');
   modal.querySelector('.cancel-btn').addEventListener('click', () => modal.style.display = 'none');
   modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
@@ -443,21 +541,22 @@ function wireFilters() {
   filterBtn.addEventListener('click', () => {
     const selects = document.querySelectorAll('.filter-box select');
     const dateInput = document.querySelector('.filter-box input[type="date"]');
-    const status = selects[0]?.value?.toLowerCase().replace('-', '_');
-    const technician = selects[1]?.value;
-    const date = dateInput?.value;
-
-    const filtered = svcState.services.filter(s =>
-      (!status || status === 'status' || s.status === status) &&
-      (!technician || technician === 'Technician' || s.technician_alloted === technician) &&
-      (!date || s.purchase_date === date)
-    );
-    renderServiceTable(filtered);
+    let status = selects[0]?.value?.toLowerCase().replace('-', '_') || '';
+    let technician = selects[1]?.value || '';
+    const date = dateInput?.value || '';
+    if (status === 'status') status = '';
+    if (technician === 'Technician') technician = '';
+    svcState.filters = (status || technician || date) ? { status, technician, date } : null;
+    renderServiceTable(getFilteredServices());
   });
 }
 
 // --- Create Service modal (injected: service.html ships a "new-service"
 // button but no matching modal markup) ---
+// Product ID is never typed in by hand — new service requests always use this
+// fixed value (a single space). The serial number identifies the unit.
+const DEFAULT_PRODUCT_ID = ' ';
+
 async function openCreateModal() {
   let modal = document.getElementById('createServiceModal');
   if (!modal) {
@@ -468,26 +567,25 @@ async function openCreateModal() {
       <div style="background:#fff;border-radius:16px;padding:26px;width:460px;">
         <h2 style="margin-bottom:18px;">New Service Request</h2>
         <form id="createServiceForm" style="display:flex;flex-direction:column;gap:12px;">
-          <input name="product_id" placeholder="Product" required>
           <select name="location" required>
             <option value="indoor">Inhouse</option>
             <option value="outdoor">Field</option>
           </select>
           <input name="serial_no" placeholder="Serial No" required>
           <select name="technician_id" id="technicianSelect" required>
-            <option value="">Select Technician</option>
+            <option value="">Select person</option>
           </select>
           <input name="purchase_date" type="date" required>
           <textarea name="issue" placeholder="Issue description" required style="min-height:80px;"></textarea>
           <textarea name="spare_parts" placeholder="Spare parts requested (optional)" style="min-height:50px;"></textarea>
-          <label style="font-size:12px;color:#64748b;">Image proof (optional, max 2MB)</label>
+          <label style="font-size:12px;color:var(--text-muted);">Image proof (optional, max 2MB)</label>
           <input type="file" name="image_file" accept="image/*">
-          <label style="font-size:12px;color:#64748b;">Video proof (optional, max 20MB)</label>
+          <label style="font-size:12px;color:var(--text-muted);">Video proof (optional, max 20MB)</label>
           <input type="file" name="video_file" accept="video/*">
-          <p id="createServiceMediaError" style="color:#d62828;font-size:12px;display:none;"></p>
+          <p id="createServiceMediaError" style="color:var(--danger);font-size:12px;display:none;"></p>
           <div style="display:flex;justify-content:flex-end;gap:10px;">
-            <button type="button" id="cancelCreateService" style="padding:10px 16px;border:none;border-radius:8px;background:#eee;cursor:pointer;">Cancel</button>
-            <button type="submit" style="padding:10px 16px;border:none;border-radius:8px;background:#1665ff;color:#fff;cursor:pointer;">Create</button>
+            <button type="button" id="cancelCreateService" style="padding:10px 16px;border:none;border-radius:8px;background:var(--border);cursor:pointer;">Cancel</button>
+            <button type="submit" style="padding:10px 16px;border:none;border-radius:8px;background:var(--primary);color:#fff;cursor:pointer;">Create</button>
           </div>
         </form>
       </div>`;
@@ -519,7 +617,7 @@ async function openCreateModal() {
       }
 
       const payload = {
-        product_id: fd.get('product_id'),
+        product_id: DEFAULT_PRODUCT_ID,
         location: fd.get('location'),
         serial_no: (fd.get('serial_no') || '').trim().toLowerCase(),
         technician_id: fd.get('technician_id'),
@@ -562,24 +660,10 @@ async function openCreateModal() {
   // reflects current usernames from Users → technician accounts
   const select = modal.querySelector('#technicianSelect');
   select.innerHTML = '<option value="">Loading...</option>';
-  const { technicians, distributors } = await loadTechnicians();
-
-  if (!technicians.length && !distributors.length) {
-    select.innerHTML = '<option value="">No technicians/distributors found — add one from Users</option>';
-  } else {
-    let html = '<option value="">Select Technician/Distributor</option>';
-    if (technicians.length) {
-      html += '<optgroup label="Technicians">' +
-        technicians.map(t => `<option value="${t.username}">${t.username}${t.name ? ' — ' + t.name : ''}</option>`).join('') +
-        '</optgroup>';
-    }
-    if (distributors.length) {
-      html += '<optgroup label="Distributors">' +
-        distributors.map(d => `<option value="${d.username}">${d.username}${d.name ? ' — ' + d.name : ''}</option>`).join('') +
-        '</optgroup>';
-    }
-    select.innerHTML = html;
-  }
+  await loadAssignees();
+  select.innerHTML = svcState.assignees.length
+    ? assigneeOptionsHtml('Select person')
+    : '<option value="">No users found — add one from Users</option>';
 
   modal.style.display = 'flex';
 }
@@ -606,7 +690,7 @@ function wireModals() {
         <select class="part-new-hologram-select" style="flex:1;" disabled>
           <option value="">Select part first…</option>
         </select>
-        <button type="button" class="remove-part-btn" style="border:none;background:#eee;border-radius:6px;padding:8px 10px;cursor:pointer;">&times;</button>
+        <button type="button" class="remove-part-btn" style="border:none;background:var(--border);border-radius:6px;padding:8px 10px;cursor:pointer;">&times;</button>
       </div>`;
 
     const addPartRow = () => {
@@ -631,8 +715,8 @@ function wireModals() {
     const renderSpareUsed = () => {
       spareBtns.forEach(b => {
         const active = (b.dataset.used === 'true') === spareUsed;
-        b.style.background = active ? '#1665ff' : '#fff';
-        b.style.color = active ? '#fff' : '#1665ff';
+        b.style.background = active ? 'var(--primary)' : '#fff';
+        b.style.color = active ? '#fff' : 'var(--primary)';
       });
       partsList.style.display = spareUsed ? 'flex' : 'none';
       addPartBtn.style.display = spareUsed ? 'block' : 'none';

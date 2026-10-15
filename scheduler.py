@@ -138,7 +138,7 @@ def send_email(to_email, text_body):
         logging.info(f"[email skipped] no address or SMTP not configured for {to_email}")
         return
     msg = MIMEText(text_body, "plain")
-    msg["Subject"] = "Acer Biomedical — Pending Item Reminder"
+    msg["Subject"] = "Accure Medical — Pending Item Reminder"
     msg["From"] = EMAIL_FROM
     msg["To"] = to_email
     try:

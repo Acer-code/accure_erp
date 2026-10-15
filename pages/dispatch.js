@@ -1,5 +1,7 @@
 const dispState = { pendingOrders: [], pendingSpare: [], pendingProductAlloc: [], dispatchedOrders: [], dispatchedSpare: [], dispatchedProductAlloc: [], searchQuery: '', activeFilters: null };
 let dispPage = 1;
+let dispAssemblyDates = {};   // serial -> assembling date (from backend)
+let dispUserNames = {};   // username -> display name (for the form's REF box)
 const DISP_PAGE_SIZE = 30;
 
 function renderTablePagination(container, page, totalPages, onChange) {
@@ -24,6 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
   wireFilter();
   wireHeaderSearch();
   wireDispatchCardClicks();
+  wireDispatchExport();
   setInterval(loadDispatchQueue, 60 * 1000);
 });
 
@@ -36,28 +39,6 @@ function dispatchRowState(d) {
 
 function dispatchCardTypeLabel(kind) {
   return kind === 'order' ? 'Order' : kind === 'product_allocation' ? 'Product' : 'Spare Part';
-}
-
-function dispatchCardRowsHtml(rows) {
-  if (!rows.length) return '<p style="color:#94a3b8;text-align:center;padding:16px;">No records to show.</p>';
-  return `<table style="width:100%;font-size:13px;border-collapse:collapse;">
-    <thead><tr style="text-align:left;">
-      <th style="padding:6px 4px;border-bottom:1px solid #eef1f6;">Type</th>
-      <th style="padding:6px 4px;border-bottom:1px solid #eef1f6;">Date</th>
-      <th style="padding:6px 4px;border-bottom:1px solid #eef1f6;">Product</th>
-      <th style="padding:6px 4px;border-bottom:1px solid #eef1f6;">Bill To / Service</th>
-      <th style="padding:6px 4px;border-bottom:1px solid #eef1f6;">Docket No.</th>
-      <th style="padding:6px 4px;border-bottom:1px solid #eef1f6;">Status</th>
-    </tr></thead>
-    <tbody>${rows.map(row => `<tr>
-      <td style="padding:6px 4px;border-bottom:1px solid #f5f7fa;">${dispatchCardTypeLabel(row.kind)}</td>
-      <td style="padding:6px 4px;border-bottom:1px solid #f5f7fa;">${dateLabel(row)}</td>
-      <td style="padding:6px 4px;border-bottom:1px solid #f5f7fa;">${productLabel(row)}</td>
-      <td style="padding:6px 4px;border-bottom:1px solid #f5f7fa;">${billToLabel(row)}</td>
-      <td style="padding:6px 4px;border-bottom:1px solid #f5f7fa;">${row.data.dispatch?.docket_no ?? '-'}</td>
-      <td style="padding:6px 4px;border-bottom:1px solid #f5f7fa;">${dispatchRowState(row.data)}</td>
-    </tr>`).join('')}</tbody>
-  </table>`;
 }
 
 function dispatchCardRows(cardType) {
@@ -81,47 +62,188 @@ const DISPATCH_CARD_TITLES = {
   total_dispatched: 'Total Dispatched'
 };
 
+const dispCV = { type: '', base: [], f: {} };
+const DISP_STATE_LABELS = { pending: 'Pending', in_progress: 'In Progress', dispatched: 'Dispatched' };
+
+function cvEnsureStyles() {
+  if (document.getElementById('cvStyles')) return;
+  const st = document.createElement('style');
+  st.id = 'cvStyles';
+  st.textContent = `
+    .cv-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    .cv-head h3{margin:0}
+    .cv-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+    .cv-bar select,.cv-bar input{padding:7px 9px;border:1px solid var(--border);border-radius:8px;font-size:12.5px;background:var(--bg-white);min-width:0}
+    .cv-bar input[type=text]{flex:1;min-width:150px}
+    .cv-bar label{font-size:12px;color:var(--text-muted)}
+    .cv-btn{padding:8px 12px;border:none;border-radius:8px;cursor:pointer;font-size:12.5px;font-weight:600}
+    .cv-btn.exp{background:var(--primary);color:#fff}
+    .cv-btn.rst{background:var(--bg-hover);color:var(--text-secondary)}
+    .cv-count{font-size:12px;color:var(--text-muted);margin:0 0 8px}
+    .cv-wrap{overflow:auto;max-height:58vh;border:1px solid var(--border);border-radius:10px}
+    .cv-tbl{width:100%;font-size:12.5px;border-collapse:collapse;min-width:760px}
+    .cv-tbl th{position:sticky;top:0;background:var(--bg-light);color:var(--text-secondary);text-align:left;padding:8px;border-bottom:1px solid var(--border);white-space:nowrap}
+    .cv-tbl td{color:var(--text-primary);padding:8px;border-bottom:1px solid var(--bg-hover);vertical-align:top}
+    .cv-tbl tbody tr.cv-row{cursor:pointer}
+    .cv-tbl tbody tr.cv-row:hover{background:var(--bg-light)}
+    .cv-hint{font-size:11.5px;color:var(--text-light);margin-top:8px}
+  `;
+  document.head.appendChild(st);
+}
+
+function cvPlain(html) {
+  const d = document.createElement('div');
+  d.innerHTML = String(html ?? '');
+  return d.textContent.replace(/\s+/g, ' ').trim();
+}
+
+function cvDownloadCsv(head, rows, fileBase) {
+  const cell = v => {
+    const t = String(v ?? '');
+    return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  };
+  const csv = '\ufeff' + [head, ...rows].map(r => r.map(cell).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `${fileBase}_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+
+function dispatchStatusHtml(d) {
+  const s = dispatchRowState(d);
+  if (s === 'pending') return '<span class="pending">Pending</span>';
+  if (s === 'dispatched') return d.status === 'delivered' ? '<span class="delivered">Delivered</span>' : '<span class="delivered">Dispatched</span>';
+  return '<span style="background:var(--warning-bg);color:var(--warning-dark);padding:3px 10px;border-radius:999px;font-size:12px;">In Progress</span>';
+}
+
+function dispCvFiltered() {
+  const f = dispCV.f;
+  const q = (f.q || '').toLowerCase();
+  return dispCV.base.filter(row => {
+    const d = row.data;
+    if (f.kind && row.kind !== f.kind) return false;
+    if (f.state && dispatchRowState(d) !== f.state) return false;
+    const day = rowBestDate(d) ? new Date(rowBestDate(d)).toISOString().slice(0, 10) : '';
+    if (f.from && day < f.from) return false;
+    if (f.to && day > f.to) return false;
+    if (q) {
+      const hay = [d.dispatch?.docket_no, d.dispatch?.invoice_no, cvPlain(productLabel(row)), cvPlain(billToLabel(row)),
+        ...rowSerialNumbers(row)].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+const DISP_CV_HEAD = ['Type', 'Date', 'Product', 'Qty', 'Bill To / Service', 'Docket No.', 'Invoice No.', 'Status'];
+
+function dispCvCells(row) {
+  return [
+    dispatchCardTypeLabel(row.kind),
+    dateLabel(row),
+    productLabel(row),
+    quantityLabel(row),
+    billToLabel(row),
+    row.data.dispatch?.docket_no ?? '-',
+    row.data.dispatch?.invoice_no ?? '-',
+    dispatchStatusHtml(row.data)
+  ];
+}
+
+function dispCvPaint() {
+  const body = document.getElementById('cvBody');
+  if (!body) return;
+  const list = dispCvFiltered();
+  body.innerHTML = list.map((row, i) => `<tr class="cv-row" data-i="${i}">${dispCvCells(row).map(c => `<td>${c}</td>`).join('')}</tr>`).join('')
+    || `<tr><td colspan="${DISP_CV_HEAD.length}" style="text-align:center;color:var(--text-light);padding:20px;">Nothing matches these filters.</td></tr>`;
+  document.getElementById('cvCount').textContent = `${list.length} of ${dispCV.base.length} record(s)`;
+  body.querySelectorAll('tr.cv-row').forEach(tr => tr.addEventListener('click', () => {
+    const vm = document.getElementById('viewDispatchModal');
+    if (vm) vm.style.zIndex = 1100;
+    openViewDispatchModal(list[Number(tr.dataset.i)]);
+  }));
+}
+
 function openDispatchCardDetailModal(cardType) {
   const modal = document.getElementById('dispatchCardDetailModal');
   if (!modal) return;
+  cvEnsureStyles();
+  dispCV.type = cardType;
+  dispCV.base = dispatchCardRows(cardType);
+  dispCV.f = {};
+  const fixedKind = { orders_pending: 'order', spare_pending: 'spare_part', product_pending: 'product_allocation' }[cardType];
+
   const content = modal.querySelector('.modal-content');
-  const rows = dispatchCardRows(cardType);
-
-  const categoryFilterHtml = cardType === 'total_pending' ? `
-    <div style="margin-bottom:12px;">
-      <select id="dispatchCardCategoryFilter" style="padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;">
-        <option value="">All Categories</option>
-        <option value="order">Orders</option>
-        <option value="spare_part">Spare Parts</option>
-        <option value="product_allocation">Allocated Products</option>
-      </select>
-    </div>` : '';
-
+  content.style.width = 'min(1100px,95vw)';
   content.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-      <h3>${DISPATCH_CARD_TITLES[cardType] || ''}</h3>
-      <button class="close" style="border:none;background:none;font-size:20px;cursor:pointer;">&times;</button>
+    <div class="cv-head"><h3>${DISPATCH_CARD_TITLES[cardType] || ''}</h3>
+      <button class="close" style="border:none;background:none;font-size:20px;cursor:pointer;">&times;</button></div>
+    <div class="cv-bar">
+      <input type="text" data-f="q" placeholder="Search docket, invoice, product, serial, bill to...">
+      ${fixedKind ? '' : `<select data-f="kind"><option value="">All Categories</option><option value="order">Orders</option><option value="spare_part">Spare Parts</option><option value="product_allocation">Allocated Products</option></select>`}
+      <select data-f="state"><option value="">All Status</option><option value="pending">Pending</option><option value="in_progress">In Progress</option><option value="dispatched">Dispatched</option></select>
+      <label>Date</label>
+      <input type="date" data-f="from" title="From"><input type="date" data-f="to" title="To">
+      <button class="cv-btn rst" id="cvReset">Reset</button>
+      <button class="cv-btn exp" id="cvExport"><i class="fa-solid fa-download"></i> Export CSV</button>
+      <button class="cv-btn exp" id="cvPrint"><i class="fa-solid fa-print"></i> Print</button>
     </div>
-    ${categoryFilterHtml}
-    <div id="dispatchCardRowsWrap">${dispatchCardRowsHtml(rows)}</div>`;
+    <p class="cv-count" id="cvCount"></p>
+    <div class="cv-wrap"><table class="cv-tbl">
+      <thead><tr>${DISP_CV_HEAD.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+      <tbody id="cvBody"></tbody></table></div>
+    <p class="cv-hint">Click a row to see full details.</p>`;
 
-  const catSelect = content.querySelector('#dispatchCardCategoryFilter');
-  if (catSelect) {
-    catSelect.addEventListener('change', () => {
-      const filtered = catSelect.value ? rows.filter(r => r.kind === catSelect.value) : rows;
-      content.querySelector('#dispatchCardRowsWrap').innerHTML = dispatchCardRowsHtml(filtered);
-    });
-  }
-
-  content.querySelector('.close').addEventListener('click', () => modal.style.display = 'none');
-  modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; }, { once: true });
+  content.querySelector('.close').addEventListener('click', () => { modal.style.display = 'none'; });
+  content.querySelectorAll('[data-f]').forEach(el => el.addEventListener(el.type === 'text' ? 'input' : 'change', e => {
+    dispCV.f[el.dataset.f] = e.target.value;
+    dispCvPaint();
+  }));
+  content.querySelector('#cvReset').addEventListener('click', () => {
+    dispCV.f = {};
+    content.querySelectorAll('[data-f]').forEach(el => { el.value = ''; });
+    dispCvPaint();
+  });
+  content.querySelector('#cvExport').addEventListener('click', () => {
+    cvDownloadCsv(DISP_CV_HEAD, dispCvFiltered().map(row => dispCvCells(row).map(cvPlain)),
+      (DISPATCH_CARD_TITLES[cardType] || 'dispatch').toLowerCase().replace(/[^a-z0-9]+/g, '_'));
+  });
+  content.querySelector('#cvPrint').addEventListener('click', () => {
+    if (typeof A4Print === 'undefined') { alert('print_a4.js is not loaded.'); return; }
+    A4Print.table(dispatchPrintOpts(DISPATCH_CARD_TITLES[cardType] || 'Dispatch', dispCvFiltered()));
+  });
+  dispCvPaint();
   modal.style.display = 'flex';
+}
+
+function dispatchPrintOpts(title, rows) {
+  return {
+    title: title + ' - Dispatch',
+    subtitle: 'Dispatch queue',
+    head: DISP_CV_HEAD,
+    rows: rows.map(row => dispCvCells(row).map(cvPlain))
+  };
+}
+
+function wireDispatchExport() {
+  const btn = document.querySelector('.top-actions .export');
+  if (!btn) return;
+  if (typeof A4Print !== 'undefined') A4Print.attachNextTo(btn, () => dispatchPrintOpts('Dispatch', getFilteredRows()));
+  btn.addEventListener('click', () => {
+    const rows = getFilteredRows();
+    if (!rows.length) { alert('Nothing to export for the current filters.'); return; }
+    cvDownloadCsv(DISP_CV_HEAD, rows.map(row => dispCvCells(row).map(cvPlain)), 'dispatch');
+  });
 }
 
 function wireDispatchCardClicks() {
   document.querySelectorAll('.card-clickable').forEach(card => {
     card.addEventListener('click', () => openDispatchCardDetailModal(card.dataset.card));
   });
+  const modal = document.getElementById('dispatchCardDetailModal');
+  if (modal) modal.addEventListener('mousedown', e => { if (e.target === modal) modal.style.display = 'none'; });
 }
 
 // ---------- Header search (docket, invoice, product, serial number) ----------
@@ -174,7 +296,20 @@ function getFilteredRows() {
   return rows;
 }
 
+async function loadDispatchUsers() {
+  if (Object.keys(dispUserNames).length) return;
+  try {
+    const res = await apiFetch('/account/users');
+    if (res.ok) ((await res.json()).dataset || []).forEach(u => { if (u.username) dispUserNames[u.username] = u.name || u.username; });
+  } catch (e) { /* names are optional - falls back to the username */ }
+}
+
+function odfPersonName(username) {
+  return username ? (dispUserNames[username] || username) : '';
+}
+
 async function loadDispatchQueue() {
+  loadDispatchUsers();
   try {
     const res = await apiFetch('/dispatch/');
     if (!res.ok) throw new Error('failed to fetch dispatch queue');
@@ -185,6 +320,7 @@ async function loadDispatchQueue() {
     dispState.dispatchedOrders = data.dispatched_orders || [];
     dispState.dispatchedSpare = data.dispatched_spare_parts || [];
     dispState.dispatchedProductAlloc = data.dispatched_product_allocations || [];
+    dispAssemblyDates = data.assembly_dates || {};
     dispPage = 1;
     updateCards();
     renderTable(getFilteredRows());
@@ -275,7 +411,7 @@ function renderTable(rows) {
     const statusHtml = !hasDispatch
       ? `<span class="pending">Pending</span>`
       : hasDocket
-        ? `<span class="delivered">Dispatched</span>`
+        ? `<span class="delivered">${d.status === 'delivered' ? 'Delivered' : 'Dispatched'}</span>`
         : `<span style="background:#fef3c7;color:#b45309;padding:3px 10px;border-radius:999px;font-size:12px;">In Progress</span>`;
     const actionHtml = !hasDispatch
       ? '<button class="confirm-dispatch-btn" style="padding:6px 12px;border:none;border-radius:8px;background:#1665ff;color:#fff;cursor:pointer;">Confirm Dispatch</button>'
@@ -298,6 +434,7 @@ function renderTable(rows) {
       <td>${statusHtml}</td>
       <td>
         <button class="icon-btn view-dispatch-btn" title="View Details"><i class="fa-solid fa-eye"></i></button>
+        <button class="icon-btn print-form-btn" title="Order Dispatch Form (View / Edit / Print)"><i class="fa-solid fa-print"></i></button>
         ${actionHtml}
       </td>`;
     tbody.appendChild(tr);
@@ -309,6 +446,14 @@ function renderTable(rows) {
     const id = tr.dataset.id;
     const row = combinedRows().find(r => (kind === 'order' ? r.data.order_id : r.data.allocation_id) === id && r.kind === kind);
     if (row) openViewDispatchModal(row);
+  }));
+
+  tbody.querySelectorAll('.print-form-btn').forEach(btn => btn.addEventListener('click', e => {
+    const tr = e.target.closest('tr');
+    const kind = tr.dataset.kind;
+    const id = tr.dataset.id;
+    const row = combinedRows().find(r => (kind === 'order' ? r.data.order_id : r.data.allocation_id) === id && r.kind === kind);
+    if (row) openDispatchForm(row);
   }));
 
   tbody.querySelectorAll('.confirm-dispatch-btn').forEach(btn => btn.addEventListener('click', e => {
@@ -419,6 +564,7 @@ function openViewDispatchModal(row) {
           <small style="color:#64748b;">By</small>
           <p style="margin:2px 0 0;font-weight:600;">${disp?.dispatched_through ?? '-'}</p>
         </div>
+        <button class="cv-btn exp" id="viewPrintForm" title="Order Dispatch Form"><i class="fa-solid fa-print"></i> Dispatch Form</button>
         <button class="close" style="border:none;background:none;font-size:20px;cursor:pointer;">&times;</button>
       </div>
     </div>
@@ -427,8 +573,87 @@ function openViewDispatchModal(row) {
     ${dispatchHtml}`;
 
   content.querySelector('.close').addEventListener('click', () => modal.style.display = 'none');
+  content.querySelector('#viewPrintForm').addEventListener('click', () => openDispatchForm(row));
   modal.style.display = 'flex';
 }
+
+// ---------- Order Dispatch Form (Excel form -> editable A4 print) ----------
+// Fills only what the system already has; every other box is left blank and
+// stays editable inside the form before printing.
+function odfDateTime(v) {
+  if (!v) return '';
+  const dt = new Date(v);
+  if (isNaN(dt)) return '';
+  const day = dt.toLocaleDateString('en-GB');
+  const hasTime = typeof v === 'string' && v.includes('T') && !/T00:00:00(\.0+)?(Z|[+-]00:?00)?$/.test(v);
+  return hasTime ? `${day} ${dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : day;
+}
+
+function odfDefaults(row) {
+  const d = row.data, disp = d.dispatch || {};
+  let company = '', address = '', ref = '', lines = [], serials = [], mfg = [];
+
+  if (row.kind === 'order' || row.kind === 'product_allocation') {
+    const items = d.items || [];
+    lines = items.map((it, i) => `${i + 1}. ${it.product_name ?? ''}${it.model_no ? ' (' + it.model_no + ')' : ''}  -  Qty: ${it.quantity ?? 0}`);
+    serials = items.filter(it => (it.serial_numbers || []).length).map(it => `${it.product_name ?? ''}: ${it.serial_numbers.join(', ')}`);
+    // Manufacturing date = assembling date of the unit (only filled when an assembly record exists)
+    items.forEach(it => {
+      const days = [...new Set((it.serial_numbers || []).map(sn => dispAssemblyDates[sn]).filter(Boolean)
+        .map(v => new Date(v)).filter(x => !isNaN(x)).map(x => x.toLocaleDateString('en-GB')))];
+      if (days.length) mfg.push(`${it.product_name ?? ''}: ${days.join(', ')}`);
+    });
+  }
+  if (row.kind === 'order') {
+    const c = d.customer || {};
+    company = c.company_name || '';
+    address = c.company_address || '';
+    ref = odfPersonName(d.reference || d.creator?.raised_by);
+  } else if (row.kind === 'product_allocation') {
+    company = d.sales_person?.name || d.company_name || '';
+    address = d.address || '';
+    ref = d.sales_person?.name || '';
+    lines.unshift('ALLOCATED / DEMO PRODUCT');
+  } else {
+    company = `Service #${(d.spare_part?.service_id || '').slice(0, 8)} (Spare Part)`;
+    ref = odfPersonName(d.allocated_by);
+    lines = ['SPARE PART FOR SERVICE', `1. ${d.spare_part?.part_name ?? ''}  -  Qty: ${d.spare_part?.quantity ?? '-'}`];
+  }
+
+  const extra = [];
+  if (disp.invoice_date) extra.push(`Invoice Date: ${new Date(disp.invoice_date).toLocaleDateString('en-GB')}`);
+  if (disp.docket_no) extra.push(`Docket No.: ${String(disp.docket_no).toUpperCase()}`);
+  if (disp.ship_to_different) extra.push(`SHIP TO: ${disp.ship_to_address?.company_name ?? ''}${disp.ship_to_address?.address ? ', ' + disp.ship_to_address.address : ''}`);
+
+  // mode of dispatch -> tick the matching box of the form
+  const mode = disp.mode_of_delivery || '';
+  const through = disp.dispatched_through || '';
+  const out = { hand: '', porter: '', courier: '', others: '' };
+  if (mode === 'self_pickup') out.hand = '\u2714';
+  else if (mode === 'courier') out.courier = ['\u2714', through].filter(Boolean).join(' ');
+  else if (mode) out.others = [mode.charAt(0).toUpperCase() + mode.slice(1), through].filter(Boolean).join(' - ');
+
+  return {
+    inv: disp.invoice_no ? String(disp.invoice_no).toUpperCase() : '',
+    ref,
+    date: new Date().toLocaleDateString('en-GB'),
+    party: company,
+    address,
+    details: [...lines, ...(extra.length ? ['', ...extra] : [])].join('\n'),
+    ...out,
+    recv: row.kind === 'order' ? odfDateTime(d.order_date) : odfDateTime(d.allotment_date || d.created_at),
+    serials: serials.join('\n'),
+    mfg: mfg.join('\n'),
+    handover: disp.docket_no ? `Docket No.: ${String(disp.docket_no).toUpperCase()}` : ''
+  };
+}
+
+function openDispatchForm(row) {
+  if (typeof A4Print === 'undefined') { alert('print_a4.js is not loaded.'); return; }
+  const d = row.data;
+  A4Print.form(`${row.kind}:${d.order_id || d.allocation_id}`, odfDefaults(row));
+}
+
 function openDispatchModal(row) {
   const modal = document.getElementById('dispatchModal');
   const content = modal.querySelector('.modal-content');
