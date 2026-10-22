@@ -101,7 +101,7 @@ class mongodbclient:
         except Exception as e:
             logging.error("unable to update the results")
             raise Exception(e)
-
+#jfuebfberfbueb
     def delete_data(self, collection_name, query, many=False):
         try:
             collection = self.database[collection_name]
