@@ -45,7 +45,7 @@ app.add_middleware(AutoAuthMiddleware)
 
 mcp = FastMCP.from_fastapi(
     app=app,
-    name="erp system"
+    name="accure erp system"
 )
 
 if __name__ == "__main__":
