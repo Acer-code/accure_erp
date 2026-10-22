@@ -445,7 +445,7 @@ class inventory_manager(mongodbclient):
                 query=self._part_query(product_name, product_type, parent_product_name, {"quantity": {"$gt": 0}})
             )
             entries.sort(key=lambda e: e.get("purchase_date") or "")
-
+# jhdbfhb
             remaining = quantity
             for entry in entries:
                 if remaining <= 0:
