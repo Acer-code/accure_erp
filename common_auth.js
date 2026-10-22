@@ -5,13 +5,14 @@ const AUTH = {
 };
 
 const ROLE_ACCESS = {
-  admin:           ['main_dashboard.html', 'orders.html', 'inventory.html', 'service.html', 'allocated.html', 'dispatch.html', 'shipment.html', 'assembly.html', 'users.html', 'reports.html', 'create_account.html', 'attendance.html', 'work_report.html'],
+  admin:           ['main_dashboard.html', 'qc.html', 'orders.html', 'inventory.html', 'service.html', 'allocated.html', 'dispatch.html', 'shipment.html', 'assembly.html', 'users.html', 'reports.html', 'create_account.html', 'attendance.html', 'work_report.html'],
   accounts:        ['main_dashboard.html', 'orders.html', 'inventory.html', 'service.html', 'allocated.html', 'dispatch.html', 'shipment.html', 'assembly.html', 'users.html', 'reports.html', 'work_report.html'],
   service_manager: ['service.html', 'inventory.html', 'dispatch.html','allocated.html', 'work_report.html'],
   assembly:        ['assembly.html', 'inventory.html', 'work_report.html'],
   technician:      ['technician.html','technician_dashboard.html', 'work_report.html'],
   distributor:     ['distributor.html', 'distributor_orders.html', 'distributor_team.html','technician.html', 'work_report.html'],
   inventory_manager: ['inventory.html', 'distributor.html', 'distributor_orders.html', 'assembly.html', 'shipment.html', 'work_report.html'],
+  qc:              ['qc.html'],
 };
 
 const ROLE_HOME = {
@@ -22,7 +23,49 @@ const ROLE_HOME = {
   technician: 'technician.html',
   distributor: 'distributor.html',
   inventory_manager: 'inventory.html',
+  qc: 'qc.html',
 };
+
+// Every page that can be granted from the hidden /access-control page.
+const PAGE_CATALOG = [
+  { file: 'main_dashboard.html',       label: 'Dashboard',            icon: 'fa-house' },
+  { file: 'orders.html',               label: 'Orders',               icon: 'fa-cart-shopping' },
+  { file: 'inventory.html',            label: 'Inventory',            icon: 'fa-boxes-stacked' },
+  { file: 'shipment.html',             label: 'Shipment',             icon: 'fa-boxes-packing' },
+  { file: 'assembly.html',             label: 'Assembly',             icon: 'fa-gears' },
+  { file: 'service.html',              label: 'Service',              icon: 'fa-screwdriver-wrench' },
+  { file: 'allocated.html',            label: 'Allocated',            icon: 'fa-people-carry-box' },
+  { file: 'dispatch.html',             label: 'Dispatch',             icon: 'fa-truck-fast' },
+  { file: 'attendance.html',           label: 'Attendance',           icon: 'fa-calendar-check' },
+  { file: 'users.html',                label: 'Users',                icon: 'fa-users' },
+  { file: 'reports.html',              label: 'Reports',              icon: 'fa-chart-column' },
+  { file: 'qc.html',                   label: 'QC',                   icon: 'fa-clipboard-check' },
+  { file: 'work_report.html',          label: 'Work Report',          icon: 'fa-list-check' },
+  { file: 'distributor.html',          label: 'Distributor',          icon: 'fa-handshake' },
+  { file: 'distributor_orders.html',   label: 'Distributor Orders',   icon: 'fa-cart-flatbed' },
+  { file: 'distributor_team.html',     label: 'Distributor Team',     icon: 'fa-people-group' },
+  { file: 'technician.html',           label: 'Technician',           icon: 'fa-user-gear' },
+  { file: 'technician_dashboard.html', label: 'Technician Dashboard', icon: 'fa-gauge' },
+  { file: 'create_account.html',       label: 'Create Account',       icon: 'fa-user-plus' },
+];
+
+// Hidden admin page (not in any sidebar): always open for admins, never grantable to others.
+const ACCESS_PAGE = 'access_control.html';
+const PAGES_KEY = 'acer_pages';
+
+// Per-user override set from /access-control. null = no override -> the role's default pages.
+function getCustomPages() {
+  try {
+    const v = JSON.parse(localStorage.getItem(PAGES_KEY));
+    return Array.isArray(v) && v.length ? v : null;
+  } catch (e) { return null; }
+}
+
+function allowedPages(role) {
+  const custom = getCustomPages();
+  const list = custom || ROLE_ACCESS[role] || [];
+  return role === 'admin' ? [...new Set([...list, ACCESS_PAGE])] : list;
+}
 
 // Only these two usernames can assign / manage work (any role, even admin). Must match WORK_MANAGERS in app.py.
 const WORK_MANAGERS = ['prashant', 'arun'];
@@ -53,6 +96,7 @@ function clearSession() {
   localStorage.removeItem(AUTH.tokenKey);
   localStorage.removeItem(AUTH.roleKey);
   localStorage.removeItem(AUTH.usernameKey);
+  localStorage.removeItem(PAGES_KEY);
 }
 
 function loginPath() {
@@ -60,7 +104,9 @@ function loginPath() {
 }
 
 function homePathFor(role) {
-  const page = ROLE_HOME[role] || 'main_dashboard.html';
+  const allowed = allowedPages(role).filter(p => p !== ACCESS_PAGE);
+  let page = ROLE_HOME[role] || 'main_dashboard.html';
+  if (allowed.length && !allowed.includes(page)) page = allowed[0];
   if (page === 'main_dashboard.html') {
     return location.pathname.includes('/pages/') ? '../main_dashboard.html' : 'main_dashboard.html';
   }
@@ -92,7 +138,7 @@ function checkPageAccess() {
     window.location.href = 'work.html';
     return;
   }
-  const allowed = ROLE_ACCESS[role] || [];
+  const allowed = allowedPages(role);
   if (!allowed.includes(currentFile)) {
     alert('Your role doesnt have access to do that action');
     window.location.href = homePathFor(role);
@@ -101,7 +147,7 @@ function checkPageAccess() {
 
 function filterSidebarByRole() {
   const role = getRole();
-  const allowed = ROLE_ACCESS[role] || [];
+  const allowed = allowedPages(role);
   document.querySelectorAll('.sidebar ul li a').forEach(a => {
     const href = a.getAttribute('href');
     if (!href || href.startsWith('#')) return;
@@ -111,6 +157,38 @@ function filterSidebarByRole() {
     }
   });
 }
+// When an admin gave this user a custom page list, add sidebar links for granted pages the
+// current page's sidebar doesn't have (e.g. an Orders link on a technician's sidebar).
+function injectAllowedLinks() {
+  const custom = getCustomPages();
+  const ul = document.querySelector('.sidebar ul');
+  if (!custom || !ul) return;
+  const inPages = location.pathname.includes('/pages/');
+  const present = new Set([...ul.querySelectorAll('a')].map(a => (a.getAttribute('href') || '').split('/').pop()));
+  const logout = [...ul.querySelectorAll('li')].find(x => x.querySelector('a[onclick*="openLogoutModal"]'));
+  PAGE_CATALOG.forEach(p => {
+    if (!custom.includes(p.file) || present.has(p.file)) return;
+    const href = p.file === 'main_dashboard.html' ? (inPages ? '../main_dashboard.html' : 'main_dashboard.html') : (inPages ? p.file : 'pages/' + p.file);
+    const li = document.createElement('li');
+    li.innerHTML = `<a href="${href}"><i class="fa-solid ${p.icon}"></i><span>${p.label}</span></a>`;
+    if (logout) ul.insertBefore(li, logout); else ul.appendChild(li);
+  });
+}
+
+// Keeps the stored page list in sync with what the admin set, without needing a re-login.
+async function syncMyAccess() {
+  try {
+    const res = await fetch('/account/my_access', { headers: { Authorization: `Bearer ${getToken()}` } });
+    if (!res.ok) return;
+    const data = await res.json();
+    const fresh = Array.isArray(data.allowed_pages) && data.allowed_pages.length ? data.allowed_pages : null;
+    if (JSON.stringify(fresh) !== JSON.stringify(getCustomPages())) {
+      if (fresh) localStorage.setItem(PAGES_KEY, JSON.stringify(fresh)); else localStorage.removeItem(PAGES_KEY);
+      location.reload();     // page guard + sidebar re-run with the new list
+    }
+  } catch (e) { /* offline / server busy: keep what we have */ }
+}
+
 async function apiFetch(url, options = {}) {
   const token = getToken();
   const headers = Object.assign({}, options.headers || {}, {
@@ -150,7 +228,9 @@ function logoutNow() {
 document.addEventListener('DOMContentLoaded', () => {
   if (requireAuth()) {
     checkPageAccess();
+    injectAllowedLinks();
     filterSidebarByRole();
+    syncMyAccess();
     initNotificationBell();
     initMessaging();
     initWorkPopup();
@@ -277,47 +357,88 @@ function ensureBellUI() {
   return { bellBtn, badge, panel };
 }
 
-function notifItemHtml(r, canAct) {
-  const typeLabels = { demo_unit: 'Demo Unit', order: 'Order', spare_part: 'Spare Part', media_review: 'Service Media', status_update: 'Service Status Update', service: 'New Service' };
+function notifItemHtml(r, isManager) {
+  const typeLabels = { demo_unit: 'Demo Unit', order: 'Order', spare_part: 'Spare Part', media_review: 'Service Media', status_update: 'Service Status Update', service: 'New Service', convert_to_order: 'Convert to Order', return_demo: 'Demo Return' };
   const label = typeLabels[r.request_type] || r.request_type;
-  const who = r.raised_by ? `by ${r.raised_by}` : '';
+  const who = r.raised_by ? `by ${rqEsc(r.raised_by)}` : '';
   let sub = '';
-  if (r.request_type === 'demo_unit' || r.request_type === 'order') {
-    sub = (r.details?.items || []).map(i => `${i.product_name} x${i.quantity}`).join(', ');
+  if (['demo_unit', 'order', 'convert_to_order', 'return_demo'].includes(r.request_type)) {
+    sub = (r.details?.items || []).map(i => `${rqEsc(i.product_name)} x${i.quantity}`).join(', ');
   } else if (r.request_type === 'spare_part') {
-    sub = r.details?.note || '';
+    sub = rqEsc(r.details?.note || '');
   } else if (r.request_type === 'service') {
-    sub = `${r.details?.product_id || ''} — ${r.details?.issue || ''}`;
+    sub = `${rqEsc(r.details?.product_id || '')} — ${rqEsc(r.details?.issue || '')}`;
   } else if (r.request_type === 'media_review') {
     sub = `Service #${(r.details?.service_id || '').slice(0, 8)} uploaded media`;
   } else if (r.request_type === 'status_update') {
-    const svcId = (r.details?.service_id || '').slice(0, 8);
-    const newStatus = (r.details?.service_status || '').replace('_', ' ');
-    sub = `Service #${svcId} — change status to "${newStatus}"${r.details?.reason ? ' — ' + r.details.reason : ''}`;
+    sub = `Service #${(r.details?.service_id || '').slice(0, 8)} — change status to "${rqEsc((r.details?.service_status || '').replace('_', ' '))}"`;
   }
-  const statusPill = r.status === 'pending'
-    ? '<span class="status pending">Pending</span>'
-    : `<span class="status ${r.status === 'approved' ? 'delivered' : 'cancelled'}">${r.status}${r.resolved_by ? ' by ' + r.resolved_by : ''}</span>`;
-
-  const isStatusUpdate = r.request_type === 'status_update';
-  const actions = (canAct && r.status === 'pending' && !isStatusUpdate) ? `
-    <div style="display:flex;gap:6px;margin-top:6px;">
-      <button class="notif-approve" data-id="${r.request_id}" style="flex:1;padding:6px 8px;border:none;border-radius:6px;background:#16a34a;color:#fff;cursor:pointer;font-size:12px;">Approve</button>
-      <button class="notif-reject" data-id="${r.request_id}" style="flex:1;padding:6px 8px;border:none;border-radius:6px;background:#d62828;color:#fff;cursor:pointer;font-size:12px;">Reject</button>
-    </div>` : (canAct && r.status === 'pending' && isStatusUpdate ? `
-    <p style="font-size:11px;color:#94a3b8;margin-top:4px;">Complete this from the Service page's Update Status action.</p>` : '');
+  let pill;
+  if (r.status === 'pending') pill = '<span class="status pending">Pending</span>';
+  else if (r.status === 'partially_approved') pill = `<span class="status pending">${isManager ? 'Partially approved' : 'Action needed'}</span>`;
+  else if (r.status === 'approved' || r.status === 'partial_accepted') pill = `<span class="status delivered">${r.status === 'approved' ? 'approved' : 'partial accepted'}</span>`;
+  else pill = `<span class="status cancelled">${rqEsc(r.status.replace('_', ' '))}</span>`;
 
   return `
-    <div class="notif-item" style="border-bottom:1px solid #eef1f6;padding:10px 4px;">
+    <div class="notif-item" data-rid="${r.request_id}" style="border-bottom:1px solid #eef1f6;padding:10px 4px;cursor:pointer;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
         <div>
           <strong style="font-size:13px;">${label}</strong> ${who}
-          <p style="font-size:12px;color:#64748b;margin-top:2px;">${sub}${r.status === 'rejected' && r.reason ? ' — ' + r.reason : ''}</p>
+          <p style="font-size:12px;color:#64748b;margin-top:2px;">${sub}${r.reason && r.status !== 'approved' ? ' — ' + rqEsc(r.reason) : ''}</p>
         </div>
-        ${statusPill}
+        ${pill}
       </div>
-      ${actions}
+      <p style="font-size:11px;color:#1665ff;margin-top:4px;">Tap to view details</p>
     </div>`;
+}
+
+let _notifData = {};
+
+// In-app notifications (e.g. "New service assigned to you"), stored per user on the server.
+let _noteData = {};
+
+function noteAgo(iso) {
+  if (!iso) return '';
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  if (mins < 1440) return `${Math.round(mins / 60)} h ago`;
+  return new Date(iso).toLocaleDateString('en-GB');
+}
+
+function noteItemHtml(n) {
+  return `
+    <div class="note-item" data-nid="${rqEsc(n.notification_id)}" style="border-bottom:1px solid #eef1f6;padding:10px 4px;cursor:pointer;background:${n.read ? 'transparent' : '#eef5ff'};border-radius:8px;">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
+        <strong style="font-size:13px;">${n.read ? '' : '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#1665ff;margin-right:6px;"></span>'}${rqEsc(n.title)}</strong>
+        <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">${noteAgo(n.created_at)}</span>
+      </div>
+      <p style="font-size:12px;color:#64748b;margin-top:2px;">${rqEsc(n.body || '')}</p>
+    </div>`;
+}
+
+async function openNotification(n) {
+  if (!n) return;
+  if (!n.read) {
+    n.read = true;
+    try { await apiFetch(`/notification/read/${encodeURIComponent(n.notification_id)}`, { method: 'POST' }); } catch (e) { /* ignore */ }
+  }
+  if (n.link) location.href = n.link;
+  else loadNotifications();
+}
+
+function showNoteToast(n, extra) {
+  const old = document.getElementById('noteToast');
+  if (old) old.remove();
+  const el = document.createElement('div');
+  el.id = 'noteToast';
+  el.style.cssText = 'position:fixed;right:20px;bottom:20px;z-index:2500;background:#0f172a;color:#fff;border-radius:12px;padding:14px 18px;max-width:340px;box-shadow:0 12px 30px rgba(0,0,0,.3);cursor:pointer;';
+  el.innerHTML = `<div style="font-weight:600;font-size:14px;"><i class="fa-regular fa-bell"></i> ${rqEsc(n.title)}</div>
+    <div style="font-size:12px;color:#cbd5e1;margin-top:4px;">${rqEsc(n.body || '')}</div>
+    ${extra ? `<div style="font-size:11px;color:#93c5fd;margin-top:6px;">+${extra} more notification${extra > 1 ? 's' : ''}</div>` : ''}`;
+  el.addEventListener('click', () => { el.remove(); openNotification(n); });
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 9000);
 }
 
 async function loadNotifications() {
@@ -326,25 +447,61 @@ async function loadNotifications() {
   if (!ui) return;
 
   try {
-    // same roles the backend allows on GET /request/ and approve/reject
     const isManager = ['admin', 'accounts', 'service_manager', 'employee'].includes(role);
-    const res = await apiFetch(isManager ? '/request/' : '/request/mine');
+    const [res, noteRes] = await Promise.all([
+      apiFetch(isManager ? '/request/' : '/request/mine'),
+      apiFetch('/notification/mine').catch(() => null)
+    ]);
     if (!res.ok) throw new Error('failed');
     const data = await res.json();
     const all = data.dataset || [];
-    const pendingCount = all.filter(r => r.status === 'pending').length;
+    const notes = noteRes && noteRes.ok ? ((await noteRes.json()).dataset || []) : [];
+    const unreadNotes = notes.filter(n => !n.read);
+    const badgeCount = all.filter(r => r.status === (isManager ? 'pending' : 'partially_approved')).length + unreadNotes.length;
 
-    ui.badge.textContent = pendingCount;
-    ui.badge.style.display = pendingCount ? 'block' : 'none';
+    ui.badge.textContent = badgeCount;
+    ui.badge.style.display = badgeCount ? 'block' : 'none';
 
     const sorted = [...all].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 25);
-    ui.panel.innerHTML = sorted.length
-      ? `<h4 style="padding:6px 4px 10px;">Notifications</h4>` + sorted.map(r => notifItemHtml(r, isManager)).join('')
-      : '<p style="padding:16px;color:#94a3b8;font-size:13px;">No notifications yet.</p>';
+    _notifData = {};
+    sorted.forEach(r => { _notifData[r.request_id] = r; });
+    _noteData = {};
+    notes.forEach(n => { _noteData[n.notification_id] = n; });
 
-    if (isManager) {
-      ui.panel.querySelectorAll('.notif-approve').forEach(btn => btn.addEventListener('click', () => notifApprove(btn.dataset.id)));
-      ui.panel.querySelectorAll('.notif-reject').forEach(btn => btn.addEventListener('click', () => notifReject(btn.dataset.id)));
+    const notesHtml = notes.length
+      ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 4px 6px;">
+           <h4>Updates</h4>
+           ${unreadNotes.length ? '<a href="#" id="noteReadAll" style="font-size:12px;color:#1665ff;">Mark all read</a>' : ''}
+         </div>` + notes.map(noteItemHtml).join('')
+      : '';
+    const reqHtml = sorted.length
+      ? `<h4 style="padding:10px 4px;">Requests</h4>` + sorted.map(r => notifItemHtml(r, isManager)).join('')
+      : '';
+    ui.panel.innerHTML = (notesHtml + reqHtml) || '<p style="padding:16px;color:#94a3b8;font-size:13px;">No notifications yet.</p>';
+
+    ui.panel.querySelectorAll('.notif-item').forEach(el => el.addEventListener('click', () => {
+      ui.panel.style.display = 'none';
+      openRequestPopup(_notifData[el.dataset.rid]);
+    }));
+    ui.panel.querySelectorAll('.note-item').forEach(el => el.addEventListener('click', () => {
+      ui.panel.style.display = 'none';
+      openNotification(_noteData[el.dataset.nid]);
+    }));
+    const readAll = document.getElementById('noteReadAll');
+    if (readAll) readAll.addEventListener('click', async e => {
+      e.preventDefault();
+      e.stopPropagation();
+      try { await apiFetch('/notification/read_all', { method: 'POST' }); } catch (err) { /* ignore */ }
+      loadNotifications();
+    });
+
+    // pop up once per browser tab for notifications the user has not been shown yet
+    let shown = [];
+    try { shown = JSON.parse(sessionStorage.getItem('acer_toasted') || '[]'); } catch (e) { shown = []; }
+    const fresh = unreadNotes.filter(n => !shown.includes(n.notification_id));
+    if (fresh.length) {
+      showNoteToast(fresh[0], fresh.length - 1);
+      sessionStorage.setItem('acer_toasted', JSON.stringify([...shown, ...fresh.map(n => n.notification_id)].slice(-100)));
     }
   } catch (err) {
     console.error(err);
@@ -377,6 +534,154 @@ async function notifReject(requestId) {
   } catch (err) {
     if (err.message !== 'unauthorized' && err.message !== 'forbidden') showResponseModal('Rejection failed', err.message, false);
   }
+}
+
+function rqEsc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function rqItemLine(i) {
+  const meta = [i.product_id, i.model_no].filter(Boolean).join(' · ');
+  return `${rqEsc(i.product_name || '')}${meta ? ` <span style="color:#94a3b8;">(${rqEsc(meta)})</span>` : ''} x${i.quantity ?? 1}${i.price ? ' @ ₹' + rqEsc(i.price) : ''}`;
+}
+
+function partialInfoHtml(d) {
+  const p = d && d.partial;
+  if (!p) return '';
+  const list = arr => (arr || []).map(i => `<div style="font-size:13px;margin:2px 0;">${rqItemLine(i)}</div>`).join('') || '-';
+  return `
+    <div style="border:1px solid #fde68a;background:#fffbeb;border-radius:10px;padding:10px 12px;margin:10px 0;">
+      <div style="font-weight:700;font-size:13px;margin-bottom:6px;color:#92400e;"><i class="fa-solid fa-circle-half-stroke"></i> Partial approval</div>
+      <small style="color:#16a34a;font-weight:600;">Approved</small>${list(p.approved_items)}
+      <small style="color:#d62828;font-weight:600;display:block;margin-top:6px;">Not approved</small>${list(p.unapproved_items)}
+      <small style="color:#64748b;display:block;margin-top:6px;">Remarks by ${rqEsc(p.by || '-')}</small>
+      <div style="font-size:13px;">${rqEsc(p.remarks || '-')}</div>
+    </div>`;
+}
+
+function closeRequestPopup() {
+  const el = document.getElementById('reqPopup');
+  if (el) el.remove();
+}
+
+async function afterRequestAction(title, msg) {
+  closeRequestPopup();
+  showResponseModal(title, msg, true);
+  await loadNotifications();
+  if (typeof window.refreshCurrentPageData === 'function') window.refreshCurrentPageData();
+  else if (typeof loadPendingRequests === 'function') loadPendingRequests();
+}
+
+async function rqPost(url, body, okTitle) {
+  try {
+    const res = await apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'action failed');
+    await afterRequestAction(okTitle, data.message || 'Done');
+  } catch (err) {
+    if (err.message !== 'unauthorized' && err.message !== 'forbidden') showResponseModal('Action failed', err.message, false);
+  }
+}
+
+function openRequestPopup(r) {
+  if (!r) return;
+  closeRequestPopup();
+  const role = getRole();
+  const isManager = ['admin', 'accounts', 'service_manager', 'employee'].includes(role);
+  const d = r.details || {};
+  const items = d.items || [];
+  const canAct = isManager && r.status === 'pending';
+  const distAct = role === 'distributor' && r.status === 'partially_approved';
+  const canPartial = canAct && ['demo_unit', 'order'].includes(r.request_type) && items.length > 1;
+  const labels = { demo_unit: 'Demo Unit Request', order: 'Order Request', spare_part: 'Spare Part Request', media_review: 'Service Media Review', status_update: 'Status Change Request', service: 'New Service Request', convert_to_order: 'Convert Demo to Order', return_demo: 'Demo Return' };
+
+  const itemRows = items.map((i, n) => `
+    <label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;margin:6px 0;${canPartial ? 'cursor:pointer;' : ''}">
+      ${canPartial ? `<input type="checkbox" class="rq-chk" data-i="${n}">` : ''}
+      <span style="font-size:13px;">${rqItemLine(i)}</span>
+    </label>`).join('');
+
+  const rows = [];
+  const row = (k, v) => { if (v) rows.push(`<div style="margin:6px 0;"><small style="color:#94a3b8;">${k}</small><p style="margin:0;font-size:13px;">${rqEsc(v)}</p></div>`); };
+  row('Raised By', r.raised_by);
+  row('Requested On', r.created_at ? new Date(r.created_at).toLocaleString('en-GB') : '');
+  row('Customer', d.customer?.company_name);
+  row('Remarks', d.remarks);
+  row('Payment Mode', d.payment_mode);
+  row('Discount', d.discount ? '₹' + d.discount : '');
+  row('Spare Part', d.note);
+  row('Service ID', d.service_id);
+  row('Issue', d.issue);
+  row('Requested Status', (d.service_status || '').replace('_', ' '));
+  row('Reason', d.reason);
+  row('Returned Through', d.returned_through);
+  row('Status', (r.status || '').replace('_', ' '));
+  if (r.status === 'rejected' || r.status === 'partial_rejected') row('Rejection Reason', r.reason);
+
+  const btn = (cls, bg, txt) => `<button class="${cls}" style="flex:1;padding:9px 10px;border:none;border-radius:8px;background:${bg};color:#fff;cursor:pointer;font-size:13px;font-weight:600;">${txt}</button>`;
+  let footer = '';
+  if (canAct) {
+    footer = `
+      <textarea id="rqRemarks" rows="2" placeholder="${canPartial ? 'Remarks (required for partial approval, optional for reject)' : 'Reason (optional for reject)'}" style="width:100%;margin-top:10px;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;resize:vertical;"></textarea>
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        ${btn('rq-approve', '#16a34a', 'Approve')}
+        ${canPartial ? btn('rq-partial', '#d97706', 'Partial Approve') : ''}
+        ${btn('rq-reject', '#d62828', 'Reject')}
+      </div>
+      ${canPartial ? '<p style="font-size:11px;color:#64748b;margin-top:6px;">For partial approval tick the products you approve; the rest go back to the distributor with your remarks.</p>' : ''}`;
+  } else if (distAct) {
+    footer = `
+      <textarea id="rqRemarks" rows="2" placeholder="Reason (optional)" style="width:100%;margin-top:10px;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;resize:vertical;"></textarea>
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        ${btn('rq-accept', '#16a34a', 'Accept approved items')}
+        ${btn('rq-decline', '#d62828', 'Reject')}
+      </div>
+      <p style="font-size:11px;color:#64748b;margin-top:6px;">Accepting raises a new request for the approved products only. Rejecting closes this request permanently.</p>`;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'reqPopup';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;justify-content:center;align-items:center;z-index:2000;';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:14px;padding:22px;width:min(480px,94vw);max-height:90vh;overflow-y:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <h3 style="margin:0;">${labels[r.request_type] || 'Request'}</h3>
+        <button class="rq-close" style="border:none;background:none;font-size:22px;cursor:pointer;">&times;</button>
+      </div>
+      ${itemRows ? `<small style="color:#94a3b8;">Products</small>${itemRows}` : ''}
+      ${rows.join('')}
+      ${partialInfoHtml(d)}
+      ${footer}
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const q = s => overlay.querySelector(s);
+  const remarks = () => (q('#rqRemarks')?.value || '').trim();
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeRequestPopup(); });
+  q('.rq-close').addEventListener('click', closeRequestPopup);
+
+  q('.rq-approve')?.addEventListener('click', () => {
+    if (r.request_type === 'convert_to_order') {
+      closeRequestPopup();
+      if (typeof openInvoiceModal === 'function') return openInvoiceModal(r);
+      return showResponseModal('Invoice details needed', 'Approve this request from the Allocated page.', false);
+    }
+    if (r.request_type === 'status_update') {
+      return showResponseModal('Use Service page', "Complete this from the Service page's Update Status action.", false);
+    }
+    closeRequestPopup();
+    notifApprove(r.request_id);
+  });
+  q('.rq-reject')?.addEventListener('click', () => rqPost(`/request/reject/${r.request_id}`, { reason: remarks() }, 'Request rejected'));
+  q('.rq-partial')?.addEventListener('click', () => {
+    const picked = [...overlay.querySelectorAll('.rq-chk:checked')].map(c => Number(c.dataset.i));
+    if (!picked.length) return showResponseModal('Select products', 'Tick at least one product to approve.', false);
+    if (picked.length === items.length) return showResponseModal('Select fewer products', 'All products are ticked, use Approve instead.', false);
+    if (!remarks()) return showResponseModal('Remarks required', 'Write why the other products are not approved.', false);
+    rqPost(`/request/partial_approve/${r.request_id}`, { approved_indexes: picked, remarks: remarks() }, 'Partially approved');
+  });
+  q('.rq-accept')?.addEventListener('click', () => rqPost(`/request/partial_respond/${r.request_id}`, { accept: true, reason: remarks() }, 'Accepted'));
+  q('.rq-decline')?.addEventListener('click', () => rqPost(`/request/partial_respond/${r.request_id}`, { accept: false, reason: remarks() }, 'Request closed'));
 }
 
 function initNotificationBell() {
@@ -1191,6 +1496,8 @@ function injectWorkSidebarLink() {
 }
 
 function initWorkPopup() {
+  // no Work Report link / popups for users who can't open that page (e.g. QC, or pages limited from /access-control)
+  if (!allowedPages(getRole()).includes('work_report.html') && !isWorkManager()) return;
   injectWorkSidebarLink();
   refreshWorkBadge();
   setInterval(refreshWorkBadge, 15000);
@@ -1198,3 +1505,143 @@ function initWorkPopup() {
   pollWorkPopup();
   setInterval(pollWorkPopup, 5000);
 }
+(function installPwa() {
+  const head = document.head;
+  const add = (tag, attrs) => { const el = document.createElement(tag); Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v)); head.appendChild(el); };
+  const vp = document.querySelector('meta[name="viewport"]');
+  if (vp) vp.setAttribute('content', 'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover');
+  add('link', { rel: 'manifest', href: '/manifest.json' });
+  add('link', { rel: 'stylesheet', href: '/css/mobile-fold.css?v=8' });
+  add('link', { rel: 'apple-touch-icon', href: '/icons/icon-192.png' });
+  add('meta', { name: 'theme-color', content: '#1665ff' });
+  {
+    const mount = () => {
+      const sb = document.querySelector('.sidebar');
+      if (!sb || document.getElementById('navToggle')) return;
+      const btn = document.createElement('button');
+      btn.id = 'navToggle';
+      btn.type = 'button';
+      btn.setAttribute('aria-label', 'Menu');
+      btn.innerHTML = '<i class="fa-solid fa-bars"></i>';
+      const bd = document.createElement('div');
+      bd.className = 'sidebar-backdrop';
+      const toggle = open => document.body.classList.toggle('nav-open', open);
+      btn.addEventListener('click', () => toggle(!document.body.classList.contains('nav-open')));
+      bd.addEventListener('click', () => toggle(false));
+      sb.addEventListener('click', e => { if (e.target.closest('a') && !e.target.closest('a[onclick]')) toggle(false); });
+      document.body.append(btn, bd);
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount); else mount();
+  }
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+  }
+})();
+
+
+(function topTableScroll() {
+  const wrappers = [];
+  const WRAP = '.table-container, .tbl-wrap, div[style*="overflow-x"]';
+  const ratio = () => Math.min(3, Math.max(1, window.innerWidth / (screen.width || window.innerWidth)));
+  function setup(w) {
+    const bar = document.createElement('div');
+    bar.className = 'top-scroll';
+    const thumb = document.createElement('div');
+    bar.appendChild(thumb);
+    w.parentNode.insertBefore(bar, w);
+
+    const layout = () => {
+      const r = ratio();
+      bar.style.height = Math.round(18 * r) + 'px';
+      const sw = w.scrollWidth, cw = w.clientWidth, bw = bar.clientWidth;
+      if (sw <= cw + 1 || !bw) {
+        thumb.style.width = '100%';
+        thumb.style.transform = 'translateX(0)';
+        bar.classList.add('idle');
+        return;
+      }
+      bar.classList.remove('idle');
+      const tw = Math.max(bw * cw / sw, 40 * r);
+      thumb.style.width = tw + 'px';
+      thumb.style.transform = `translateX(${(w.scrollLeft / (sw - cw)) * (bw - tw)}px)`;
+    };
+
+    const scrollToX = (clientX, grab) => {
+      const rect = bar.getBoundingClientRect();
+      const sw = w.scrollWidth, cw = w.clientWidth, bw = bar.clientWidth;
+      const tw = thumb.getBoundingClientRect().width;
+      const x = Math.min(Math.max(clientX - rect.left - grab, 0), bw - tw);
+      w.scrollLeft = (x / (bw - tw)) * (sw - cw);
+    };
+
+    let dragging = false, grab = 0;
+    bar.addEventListener('pointerdown', e => {
+      if (bar.classList.contains('idle')) return;
+      const tr = thumb.getBoundingClientRect();
+      grab = (e.clientX >= tr.left && e.clientX <= tr.right) ? e.clientX - tr.left : tr.width / 2;
+      dragging = true;
+      bar.setPointerCapture(e.pointerId);
+      scrollToX(e.clientX, grab);
+      e.preventDefault();
+    });
+    bar.addEventListener('pointermove', e => { if (dragging) scrollToX(e.clientX, grab); });
+    const stop = () => { dragging = false; };
+    bar.addEventListener('pointerup', stop);
+    bar.addEventListener('pointercancel', stop);
+    w.addEventListener('scroll', layout);
+    if (window.ResizeObserver) new ResizeObserver(layout).observe(w);
+    w._syncTop = layout;
+    wrappers.push(w);
+    layout();
+  }
+  function scan() {
+    document.querySelectorAll('table').forEach(t => {
+      if (t.closest('.top-scroll')) return;
+      let w = t.closest(WRAP);
+      if (!w) {
+        if (!t.parentNode) return;
+        w = document.createElement('div');
+        w.className = 'tbl-wrap';
+        t.parentNode.insertBefore(w, t);
+        w.appendChild(t);
+      }
+      if (!w._syncTop && w.parentNode) setup(w);
+    });
+    wrappers.forEach(w => { if (w.isConnected) w._syncTop(); });
+  }
+  let queued = false;
+  const queue = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; scan(); });
+  };
+  const start = () => {
+    scan();
+    new MutationObserver(queue).observe(document.body, { childList: true, subtree: true });
+    window.addEventListener('resize', queue);
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+})();
+
+window.addEventListener('load', () => {
+  if (typeof getRole === 'function' && getRole() === 'distributor') {
+    ['sidebarUserRole', 'headerUserRole'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = 'Sales';
+    });
+  }
+});
+
+(function addQcLink() {
+  const mount = () => {
+    if (typeof getRole !== 'function' || !['admin', 'qc'].includes(getRole()) || getCustomPages()) return;
+    const ul = document.querySelector('.sidebar ul');
+    if (!ul || ul.querySelector('a[href$="qc.html"]')) return;
+    const inPages = location.pathname.includes('/pages/');
+    const li = document.createElement('li');
+    li.innerHTML = `<a href="${inPages ? 'qc.html' : 'pages/qc.html'}"><i class="fa-solid fa-clipboard-check"></i><span>QC</span></a>`;
+    const logout = [...ul.querySelectorAll('li')].find(x => x.querySelector('a[onclick*="openLogoutModal"]'));
+    if (logout) ul.insertBefore(li, logout); else ul.appendChild(li);
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount); else mount();
+})();

@@ -129,15 +129,15 @@ function dispCvFiltered() {
     if (f.from && day < f.from) return false;
     if (f.to && day > f.to) return false;
     if (q) {
-      const hay = [d.dispatch?.docket_no, d.dispatch?.invoice_no, cvPlain(productLabel(row)), cvPlain(billToLabel(row)),
-        ...rowSerialNumbers(row)].join(' ').toLowerCase();
+      const hay = [d.dispatch?.docket_no, d.dispatch?.dispatched_through, d.dispatch?.invoice_no, cvPlain(productLabel(row)), cvPlain(billToLabel(row)),
+      ...rowSerialNumbers(row)].join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
   });
 }
 
-const DISP_CV_HEAD = ['Type', 'Date', 'Product', 'Qty', 'Bill To / Service', 'Docket No.', 'Invoice No.', 'Status'];
+const DISP_CV_HEAD = ['Type', 'Date', 'Product', 'Qty', 'Bill To / Service', 'Docket No.', 'Courier / Transport', 'Invoice No.', 'Status'];
 
 function dispCvCells(row) {
   return [
@@ -147,9 +147,23 @@ function dispCvCells(row) {
     quantityLabel(row),
     billToLabel(row),
     row.data.dispatch?.docket_no ?? '-',
+    row.data.dispatch?.dispatched_through || '-',
     row.data.dispatch?.invoice_no ?? '-',
     dispatchStatusHtml(row.data)
   ];
+}
+
+function dispCvExportRows(row) {
+  const d = row.data;
+  const head = [dispatchCardTypeLabel(row.kind), dateLabel(row)];
+  const tail = [cvPlain(billToLabel(row)), d.dispatch?.docket_no ?? '-', d.dispatch?.dispatched_through || '-', d.dispatch?.invoice_no ?? '-', cvPlain(dispatchStatusHtml(d))];
+  if ((row.kind === 'order' || row.kind === 'product_allocation') && (d.items || []).length) {
+    return d.items.map(i => {
+      const meta = [i.product_id, i.model_no].filter(Boolean).join(' · ');
+      return [...head, `${i.product_name ?? ''}${meta ? ' (' + meta + ')' : ''}`, i.quantity ?? 0, ...tail];
+    });
+  }
+  return [[...head, d.spare_part?.part_name || '', d.spare_part?.quantity ?? '-', ...tail]];
 }
 
 function dispCvPaint() {
@@ -207,7 +221,7 @@ function openDispatchCardDetailModal(cardType) {
     dispCvPaint();
   });
   content.querySelector('#cvExport').addEventListener('click', () => {
-    cvDownloadCsv(DISP_CV_HEAD, dispCvFiltered().map(row => dispCvCells(row).map(cvPlain)),
+    cvDownloadCsv(DISP_CV_HEAD, dispCvFiltered().flatMap(dispCvExportRows),
       (DISPATCH_CARD_TITLES[cardType] || 'dispatch').toLowerCase().replace(/[^a-z0-9]+/g, '_'));
   });
   content.querySelector('#cvPrint').addEventListener('click', () => {
@@ -223,7 +237,7 @@ function dispatchPrintOpts(title, rows) {
     title: title + ' - Dispatch',
     subtitle: 'Dispatch queue',
     head: DISP_CV_HEAD,
-    rows: rows.map(row => dispCvCells(row).map(cvPlain))
+    rows: rows.flatMap(dispCvExportRows)
   };
 }
 
@@ -234,7 +248,7 @@ function wireDispatchExport() {
   btn.addEventListener('click', () => {
     const rows = getFilteredRows();
     if (!rows.length) { alert('Nothing to export for the current filters.'); return; }
-    cvDownloadCsv(DISP_CV_HEAD, rows.map(row => dispCvCells(row).map(cvPlain)), 'dispatch');
+    cvDownloadCsv(DISP_CV_HEAD, rows.flatMap(dispCvExportRows), 'dispatch');
   });
 }
 
@@ -274,9 +288,10 @@ function getFilteredRows() {
       const d = row.data;
       const docket = (d.dispatch?.docket_no || '').toLowerCase();
       const invoice = (d.dispatch?.invoice_no || '').toLowerCase();
+      const courier = (d.dispatch?.dispatched_through || '').toLowerCase();
       const product = productLabel(row).toLowerCase();
       const serials = rowSerialNumbers(row).map(s => (s || '').toLowerCase());
-      return docket.includes(q) || invoice.includes(q) || product.includes(q) ||
+      return docket.includes(q) || invoice.includes(q) || courier.includes(q) || product.includes(q) ||
         serials.some(s => s.includes(q));
     });
   }
@@ -430,11 +445,13 @@ function renderTable(rows) {
       <td>${quantityLabel(row)}</td>
       <td>${billToLabel(row)}</td>
       <td>${d.dispatch?.docket_no ?? '-'}</td>
+      <td>${d.dispatch?.dispatched_through || '-'}</td>
       <td>${d.dispatch?.invoice_no ?? '-'}</td>
       <td>${statusHtml}</td>
       <td>
         <button class="icon-btn view-dispatch-btn" title="View Details"><i class="fa-solid fa-eye"></i></button>
         <button class="icon-btn print-form-btn" title="Order Dispatch Form (View / Edit / Print)"><i class="fa-solid fa-print"></i></button>
+        <button class="icon-btn qc-form-btn" title="QC Forms (SOP-07)"><i class="fa-solid fa-clipboard-check"></i></button>
         ${actionHtml}
       </td>`;
     tbody.appendChild(tr);
@@ -454,6 +471,14 @@ function renderTable(rows) {
     const id = tr.dataset.id;
     const row = combinedRows().find(r => (kind === 'order' ? r.data.order_id : r.data.allocation_id) === id && r.kind === kind);
     if (row) openDispatchForm(row);
+  }));
+
+  tbody.querySelectorAll('.qc-form-btn').forEach(btn => btn.addEventListener('click', e => {
+    const tr = e.target.closest('tr');
+    const kind = tr.dataset.kind;
+    const id = tr.dataset.id;
+    const row = combinedRows().find(r => (kind === 'order' ? r.data.order_id : r.data.allocation_id) === id && r.kind === kind);
+    if (row) openQcFormFor(row);
   }));
 
   tbody.querySelectorAll('.confirm-dispatch-btn').forEach(btn => btn.addEventListener('click', e => {
@@ -489,91 +514,229 @@ function wireFilter() {
 }
 
 // ---------- View Details modal ----------
+const DV_LABELS = {
+  dispatched_through: 'Courier / Transport', mode_of_delivery: 'Mode of Delivery', gst_number: 'GST No.', total_mrp: 'Total Amount',
+  company_name: 'Company', company_address: 'Address', phone_number: 'Phone', contact_number: 'Contact No.', serial_numbers: 'Serial No.',
+  model_no: 'Model No.', product_id: 'Product ID', tax_rate: 'Tax Rate (%)', order_id: 'Order ID', allocation_id: 'Allocation ID',
+  service_id: 'Service ID', part_name: 'Part Name', created_by: 'Created By', allocated_by: 'Allocated By'
+};
+function dvEsc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function dvLabel(k) {
+  return DV_LABELS[k] || k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+function dvFmt(k, v) {
+  if (v === true) return 'Yes';
+  if (v === false) return 'No';
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}(T|$)/.test(v)) {
+    const t = new Date(v);
+    if (!isNaN(t)) return v.length > 10 ? t.toLocaleString('en-GB') : t.toLocaleDateString('en-GB');
+  }
+  if (typeof v === 'number' && /(price|amount|mrp|total|discount|charge)/i.test(k) && !/(rate|percent|qty|quantity)/i.test(k)) return '\u20b9' + v;
+  return String(v);
+}
+function dvFlat(obj, prefix, out, skip) {
+  Object.entries(obj || {}).forEach(([k, v]) => {
+    if (skip.includes(k) || v === null || v === undefined || v === '') return;
+    if (typeof v === 'string' && v.startsWith('data:')) return;
+    const label = prefix ? `${prefix} \u2013 ${dvLabel(k)}` : dvLabel(k);
+    if (Array.isArray(v)) {
+      if (!v.length) return;
+      if (v.every(x => x === null || typeof x !== 'object')) out.push([label, v.map(x => dvFmt(k, x)).join(', ')]);
+      else v.forEach((x, i) => dvFlat(x, `${label} ${i + 1}`, out, skip));
+    } else if (typeof v === 'object') {
+      dvFlat(v, label, out, skip);
+    } else {
+      out.push([label, dvFmt(k, v)]);
+    }
+  });
+  return out;
+}
+function dvRow(label, value) {
+  if (value === undefined || value === null || value === '') return '';
+  return `<div class="detail"><small>${dvEsc(label)}</small><p>${dvEsc(value)}</p></div>`;
+}
+function dvRows(obj, skip) {
+  return dvFlat(obj, '', [], ['_id', 'image', 'password'].concat(skip || [])).map(([l, v]) => dvRow(l, v)).join('');
+}
+function dvSection(title, html) {
+  return html ? `<h4 style="margin:16px 0 8px;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#64748b;">${title}</h4>${html}` : '';
+}
+function dvItemBlock(it) {
+  return `<div style="border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;margin-bottom:8px;">${dvRows(it)}</div>`;
+}
+
+function dvPick(obj, keys) {
+  for (const k of keys) {
+    const v = obj ? obj[k] : undefined;
+    if (v !== undefined && v !== null && v !== '') return v;
+  }
+  return '';
+}
+function dvTile(label, value, hl) {
+  if (value === undefined || value === null || value === '') return '';
+  return `<div style="background:${hl ? '#eef4ff' : '#f7f8fd'};${hl ? 'border:1px solid #bfd4ff;' : ''}border-radius:12px;padding:12px 14px;min-width:0;">
+    <div style="font-size:12px;color:#64748b;margin-bottom:4px;">${dvEsc(label)}</div>
+    <div style="font-size:14.5px;color:#1e293b;font-weight:500;word-break:break-word;">${dvEsc(value)}</div></div>`;
+}
+function dvTileGrid(tilesHtml) {
+  return tilesHtml ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">${tilesHtml}</div>` : '';
+}
+function dvLeftoverTiles(obj, skip, prefix) {
+  return dvFlat(obj, prefix || '', [], ['_id', 'image', 'password'].concat(skip || [])).map(([l, v]) => dvTile(l, v)).join('');
+}
+function dvChips(arr) {
+  return (arr || []).map(x => `<span style="display:inline-block;background:#eef2ff;color:#3730a3;border-radius:8px;padding:2px 8px;font-size:12px;margin:2px 4px 2px 0;">${dvEsc(x)}</span>`).join('');
+}
+function dvTitle(t) {
+  return `<h4 style="margin:18px 0 8px;font-size:13px;color:#334155;">${t}</h4>`;
+}
+function dvProductsTable(items, withPrice) {
+  if (!items.length) return '';
+  const th = 'padding:12px 14px;text-align:left;color:#334155;white-space:nowrap;';
+  const td = 'padding:12px 14px;border-top:1px solid #eef1f6;vertical-align:top;';
+  const rows = items.map(it => {
+    const qty = Number(it.quantity) || 0;
+    const price = Number(it.price);
+    const tax = Number(it.tax_rate) || 0;
+    const line = !isNaN(price) && it.price !== undefined && it.price !== '' ? qty * price * (1 + tax / 100) : null;
+    return `<tr>
+      <td style="${td}"><strong>${dvEsc(it.product_name ?? '')}</strong><br><small style="color:#94a3b8;">${dvEsc([it.product_id && 'ID: ' + it.product_id, it.model_no && 'Model: ' + it.model_no].filter(Boolean).join(' \u00b7 '))}</small></td>
+      <td style="${td}">${dvChips(it.serial_numbers) || '-'}</td>
+      <td style="${td}">${qty}</td>
+      ${withPrice ? `<td style="${td}">${it.price !== undefined && it.price !== '' ? '\u20b9' + Number(it.price).toLocaleString('en-IN') : '-'}</td>
+      <td style="${td}">${it.tax_rate !== undefined && it.tax_rate !== '' ? it.tax_rate + '%' : '-'}</td>
+      <td style="${td}"><strong>${line === null ? '-' : '\u20b9' + line.toLocaleString('en-IN')}</strong></td>` : ''}
+    </tr>`;
+  }).join('');
+  return `<div style="border:1px solid #e2e8f0;border-radius:12px;overflow-x:auto;">
+    <table style="width:100%;min-width:480px;border-collapse:collapse;font-size:13.5px;">
+      <thead><tr style="background:#eaf2ff;"><th style="${th}">Product</th><th style="${th}">Serial No(s)</th><th style="${th}">Qty</th>${withPrice ? `<th style="${th}">Price</th><th style="${th}">Tax</th><th style="${th}">Line Total</th>` : ''}</tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+}
+function dvTotalsBox(d) {
+  const items = d.items || [];
+  let sub = 0, tax = 0;
+  items.forEach(it => {
+    const base = (Number(it.quantity) || 0) * (Number(it.price) || 0);
+    sub += base;
+    tax += base * (Number(it.tax_rate) || 0) / 100;
+  });
+  const disc = Number(d.discount) || 0;
+  const total = d.total_mrp !== undefined && d.total_mrp !== '' ? Number(d.total_mrp) : sub + tax - disc;
+  const money = n => '\u20b9' + Number(n || 0).toLocaleString('en-IN');
+  const line = (k, v, strong) => `<div style="display:flex;justify-content:space-between;padding:6px 0;${strong ? 'border-top:1px solid #e2e8f0;margin-top:6px;padding-top:12px;font-weight:700;font-size:15px;' : ''}"><span>${k}</span><span>${v}</span></div>`;
+  return `<div style="background:#f7f8fd;border-radius:12px;padding:12px 18px;width:min(360px,100%);margin:14px 0 0 auto;font-size:14px;">
+    ${line('Subtotal', money(sub))}${line('Tax', money(tax))}${line('Discount', '- ' + money(disc))}${line('Total Amount', money(total), true)}</div>`;
+}
+
 function openViewDispatchModal(row) {
   const modal = document.getElementById('viewDispatchModal');
   if (!modal) return;
   const content = modal.querySelector('.modal-content');
   const d = row.data;
   const disp = d.dispatch || null;
+  const c = d.customer || {};
+  const idLabel = row.kind === 'order' ? 'Order ID' : 'Allocation ID';
+  const idValue = row.kind === 'order' ? d.order_id : d.allocation_id;
 
-  let bodyHtml = '';
+  let infoTiles = '';
+  let productsHtml = '';
+  let totalsHtml = '';
   if (row.kind === 'order') {
-    const items = d.items || [];
-    const customer = d.customer || {};
-    const itemsRows = items.length
-      ? items.map(it => `<tr>
-          <td>${it.product_name ?? ''}<br><small style="color:#94a3b8;">${[it.product_id, it.model_no].filter(Boolean).join(' · ')}</small>${it.serial_numbers?.length ? `<br><small style="color:#94a3b8;">${it.serial_numbers.join(', ')}</small>` : ''}</td>
-          <td>${it.quantity ?? 0}</td>
-          <td>₹${it.price ?? 0}</td>
-        </tr>`).join('')
-      : `<tr><td colspan="3" style="text-align:center;color:#94a3b8;">No items</td></tr>`;
-
-    bodyHtml = `
-      <div class="detail"><small>Order ID</small><p>${d.order_id ?? ''}</p></div>
-      <div class="detail"><small>Order Date</small><p>${d.order_date ? new Date(d.order_date).toLocaleDateString('en-GB') : '-'}</p></div>
-      <div class="detail"><small>Company</small><p>${customer.company_name ?? '-'}</p></div>
-      <div class="detail"><small>Status</small><p>${d.status ?? ''}</p></div>
-      <table style="width:100%;font-size:13px;margin:10px 0;border-collapse:collapse;">
-        <thead><tr style="text-align:left;color:#fff;"><th>Product</th><th>Qty</th><th>Price</th></tr></thead>
-        <tbody>${itemsRows}</tbody>
-      </table>
-      <div class="detail"><small>Total Amount</small><p>₹${d.total_mrp ?? 0}</p></div>`;
+    const usedTop = ['dispatch', 'items', 'customer', 'attachments', 'order_id', 'status', 'total_mrp', 'discount', 'order_date', 'payment_mode', 'credit_days', 'payment_terms', 'reference', 'reference_name', 'created_by', 'warranty', 'warranty_period'];
+    const usedCust = ['company_name', 'gst_number', 'gst_no', 'gstin', 'phone_number', 'contact_number', 'contact', 'phone', 'mobile', 'contact_person'];
+    const pay = [dvPick(d, ['payment_mode', 'payment_terms']), d.credit_days ? `${d.credit_days} days` : ''].filter(Boolean).join(' \u2014 ');
+    const files = (d.attachments || []).map(a => (typeof a === 'string' ? a : a.filename || a.name || a.original_name || 'file')).join(', ');
+    infoTiles = dvTileGrid(
+      dvTile('Company', c.company_name)
+      + dvTile('GST Number', dvPick(c, ['gst_number', 'gst_no', 'gstin']))
+      + dvTile('Contact', [dvPick(c, ['contact_person']), dvPick(c, ['phone_number', 'contact_number', 'contact', 'phone', 'mobile'])].filter(Boolean).join(' \u00b7 '))
+      + dvTile('Order Date', d.order_date ? new Date(d.order_date).toLocaleDateString('en-GB') : '')
+      + dvTile('Payment', pay)
+      + dvTile('Reference', dvPick(d, ['reference', 'reference_name']))
+      + dvTile('Created By', d.created_by)
+      + dvTile('Warranty', dvPick(d, ['warranty', 'warranty_period']))
+      + dvTile('Attachments', files)
+      + dvLeftoverTiles(c, usedCust, 'Customer')
+      + dvLeftoverTiles(d, usedTop));
+    productsHtml = dvTitle('Products') + dvProductsTable(d.items || [], true);
+    totalsHtml = dvTotalsBox(d);
   } else if (row.kind === 'product_allocation') {
-    const items = d.items || [];
-    const itemsRows = items.length
-      ? items.map(it => `<tr>
-          <td>${it.product_name ?? ''}<br><small style="color:#94a3b8;">${[it.product_id, it.model_no].filter(Boolean).join(' · ')}</small>${it.serial_numbers?.length ? `<br><small style="color:#94a3b8;">${it.serial_numbers.join(', ')}</small>` : ''}</td>
-          <td>${it.quantity ?? 0}</td>
-        </tr>`).join('')
-      : `<tr><td colspan="2" style="text-align:center;color:#94a3b8;">No items</td></tr>`;
-
-    bodyHtml = `
-      <div class="detail"><small>Allocation ID</small><p>${d.allocation_id ?? ''}</p></div>
-      <div class="detail"><small>Sales Person</small><p>${d.sales_person?.name ?? '-'}</p></div>
-      <div class="detail"><small>Address</small><p>${d.address ?? '-'}</p></div>
-      <table style="width:100%;font-size:13px;margin:10px 0;border-collapse:collapse;">
-        <thead><tr style="text-align:left;color:#fff;"><th>Product</th><th>Qty</th></tr></thead>
-        <tbody>${itemsRows}</tbody>
-      </table>`;
+    const usedTop = ['dispatch', 'items', 'sales_person', 'allocation_id', 'company_name', 'address', 'gst_number', 'phone_number', 'allotment_date', 'return_due_date', 'created_by', 'allocated_by', 'remarks', 'status'];
+    infoTiles = dvTileGrid(
+      dvTile('Sales Person', [d.sales_person?.name, d.sales_person?.contact_number].filter(Boolean).join(' \u00b7 '))
+      + dvTile('Company', d.company_name)
+      + dvTile('Address', d.address)
+      + dvTile('GST Number', d.gst_number)
+      + dvTile('Phone', d.phone_number)
+      + dvTile('Allotment Date', d.allotment_date ? new Date(d.allotment_date).toLocaleDateString('en-GB') : '')
+      + dvTile('Return Due', d.return_due_date ? new Date(d.return_due_date).toLocaleDateString('en-GB') : '')
+      + dvTile('Created By', dvPick(d, ['created_by', 'allocated_by']))
+      + dvTile('Remarks', d.remarks)
+      + dvLeftoverTiles(d.sales_person, ['name', 'contact_number'], 'Sales Person')
+      + dvLeftoverTiles(d, usedTop));
+    productsHtml = dvTitle('Products') + dvProductsTable(d.items || [], false);
   } else {
-    bodyHtml = `
-      <div class="detail"><small>Allocation ID</small><p>${d.allocation_id ?? ''}</p></div>
-      <div class="detail"><small>Part Name</small><p>${d.spare_part?.part_name ?? '-'}</p></div>
-      <div class="detail"><small>Quantity</small><p>${d.spare_part?.quantity ?? '-'}</p></div>
-      <div class="detail"><small>Service ID</small><p>${d.spare_part?.service_id ?? '-'}</p></div>`;
+    const usedTop = ['dispatch', 'spare_part', 'allocation_id', 'status'];
+    infoTiles = dvTileGrid(
+      dvTile('Part Name', d.spare_part?.part_name)
+      + dvTile('Quantity', d.spare_part?.quantity)
+      + dvTile('Service ID', d.spare_part?.service_id)
+      + dvLeftoverTiles(d.spare_part, ['part_name', 'quantity', 'service_id'], 'Spare Part')
+      + dvLeftoverTiles(d, usedTop));
   }
 
-  const dispatchHtml = disp ? `
-    <div class="detail"><small>Invoice No.</small><p>${disp.invoice_no ?? '-'}</p></div>
-    <div class="detail"><small>Invoice Date</small><p>${disp.invoice_date ? new Date(disp.invoice_date).toLocaleDateString('en-GB') : '-'}</p></div>
-    <div class="detail"><small>Mode of Delivery</small><p>${disp.mode_of_delivery ?? '-'}</p></div>
-    <div class="detail"><small>Dispatched By</small><p>${disp.dispatched_by ?? '-'}</p></div>
-    <div class="detail"><small>Ship To</small><p>${disp.ship_to_different ? `${disp.ship_to_address?.company_name ?? ''}, ${disp.ship_to_address?.address ?? ''}` : 'Same as bill to'}</p></div>
-    <div class="detail"><small>Dispatched At</small><p>${disp.dispatched_at ? new Date(disp.dispatched_at).toLocaleString('en-GB') : '-'}</p></div>
-  ` : `<div class="detail"><small>Dispatch</small><p>Not yet dispatched</p></div>`;
+  let dispatchHtml;
+  if (disp) {
+    const handled = ['image', 'image_drive_link', 'media_updated_at', 'docket_no', 'dispatched_through', 'mode_of_delivery', 'invoice_no', 'invoice_date', 'dispatched_by', 'ship_to_different', 'ship_to_address', 'dispatched_at'];
+    const ship = disp.ship_to_different
+      ? [disp.ship_to_address?.company_name, disp.ship_to_address?.address].filter(Boolean).join(', ')
+      : 'Same as bill to';
+    const photo = typeof disp.image === 'string' && disp.image.startsWith('data:image')
+      ? `<div style="margin-top:10px;"><div style="font-size:12px;color:#64748b;margin-bottom:6px;">Packaging / Handover Photo</div><img src="${disp.image}" alt="Dispatch photo" style="max-width:100%;border-radius:12px;"></div>`
+      : disp.image_drive_link
+        ? `<div style="margin-top:10px;"><a href="${dvEsc(disp.image_drive_link)}" target="_blank" rel="noopener">View packaging / handover photo</a></div>`
+        : '';
+    dispatchHtml = dvTitle('Dispatch') + dvTileGrid(
+      dvTile('Courier / Transport', disp.dispatched_through || '-', true)
+      + dvTile('Docket No.', disp.docket_no || '-')
+      + dvTile('Mode of Delivery', (disp.mode_of_delivery || '').replace(/_/g, ' '))
+      + dvTile('Invoice No.', disp.invoice_no)
+      + dvTile('Invoice Date', disp.invoice_date ? new Date(disp.invoice_date).toLocaleDateString('en-GB') : '')
+      + dvTile('Dispatched By', disp.dispatched_by)
+      + dvTile('Ship To', ship)
+      + dvTile('Dispatched At', disp.dispatched_at ? new Date(disp.dispatched_at).toLocaleString('en-GB') : '')
+      + dvLeftoverTiles(disp, handled)) + photo;
+  } else {
+    dispatchHtml = dvTitle('Dispatch') + dvTileGrid(dvTile('Dispatch', 'Not yet dispatched'));
+  }
 
+  content.style.width = 'min(980px, 96vw)';
+  content.style.maxHeight = '88vh';
+  content.style.overflowY = 'auto';
   content.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
-      <h3>Dispatch Details</h3>
-      <div style="display:flex;align-items:flex-start;gap:16px;">
-        <div style="text-align:right;">
-          <small style="color:#64748b;">Docket No.</small>
-          <p style="margin:2px 0 0;font-weight:600;">${disp?.docket_no ?? '-'}</p>
-        </div>
-        <div style="text-align:right;">
-          <small style="color:#64748b;">By</small>
-          <p style="margin:2px 0 0;font-weight:600;">${disp?.dispatched_through ?? '-'}</p>
-        </div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;padding-bottom:12px;margin-bottom:14px;border-bottom:1px solid #eef1f6;">
+      <div>
+        <h3 style="margin:0;">Dispatch Details</h3>
+        <div style="font-size:12.5px;color:#94a3b8;margin-top:4px;word-break:break-all;">${idLabel}: ${dvEsc(idValue ?? '')}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span style="font-size:14px;color:#475569;">${cvPlain(dispatchStatusHtml(d))}</span>
         <button class="cv-btn exp" id="viewPrintForm" title="Order Dispatch Form"><i class="fa-solid fa-print"></i> Dispatch Form</button>
+        <button class="cv-btn exp" id="viewQcForm" title="QC Forms (SOP-07)"><i class="fa-solid fa-clipboard-check"></i> QC Form</button>
         <button class="close" style="border:none;background:none;font-size:20px;cursor:pointer;">&times;</button>
       </div>
     </div>
-    ${bodyHtml}
-    <hr style="margin:14px 0;border:none;border-top:1px solid #eef1f6;">
-    ${dispatchHtml}`;
+    ${infoTiles}
+    ${dispatchHtml}
+    ${productsHtml}
+    ${totalsHtml}`;
 
   content.querySelector('.close').addEventListener('click', () => modal.style.display = 'none');
   content.querySelector('#viewPrintForm').addEventListener('click', () => openDispatchForm(row));
+  content.querySelector('#viewQcForm').addEventListener('click', () => openQcFormFor(row));
   modal.style.display = 'flex';
 }
 
@@ -646,6 +809,11 @@ function odfDefaults(row) {
     mfg: mfg.join('\n'),
     handover: disp.docket_no ? `Docket No.: ${String(disp.docket_no).toUpperCase()}` : ''
   };
+}
+
+function openQcFormFor(row) {
+  if (typeof openQcForms !== 'function') { alert('qc_forms.js is not loaded.'); return; }
+  openQcForms(row, { assemblyDates: dispAssemblyDates, personName: odfPersonName });
 }
 
 function openDispatchForm(row) {

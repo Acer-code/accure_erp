@@ -30,6 +30,26 @@ function renderTablePagination(container, page, totalPages, onChange) {
   }));
 }
 
+// Opens the allocate wizard at the part step for a technician's spare part request:
+// ?alloc_service=<service_id>&alloc_parts=<name|name>&alloc_request=<request_id>
+async function openRequestedPartAllocation(params) {
+  const sid = params.get('alloc_service'), rid = params.get('alloc_request');
+  const parts = (params.get('alloc_parts') || '').split('|').map(x => x.trim()).filter(Boolean);
+  if (!sid || !rid) return;
+  const modal = document.getElementById('allocateModal');
+  resetAllocWiz();
+  allocWiz.type = 'spare';
+  allocWiz.requestId = rid;
+  allocWiz.queue = parts;
+  modal.style.display = 'flex';
+  try {
+    const res = await apiFetch('/service/');
+    const data = await res.json();
+    allocWiz.service = (data.dataset || []).find(x => x.service_id === sid) || { service_id: sid };
+  } catch (e) { allocWiz.service = { service_id: sid }; }
+  renderSparePartFormStep();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   loadAllocations();
   loadInventoryForAllocation();
@@ -40,6 +60,10 @@ document.addEventListener('DOMContentLoaded', () => {
   injectAllocateModal();
   wireNotifBell();
   wireAllocCardClicks();
+  try {
+    const qp = new URLSearchParams(location.search);
+    if (qp.get('alloc_service')) { openRequestedPartAllocation(qp); history.replaceState(null, '', location.pathname); }
+  } catch (e) { console.error(e); }
   setInterval(() => renderAllocationsTable(getFilteredAllocations()), 60 * 1000); // keep countdowns fresh
   setInterval(loadPendingRequests, 60 * 1000);
 });
@@ -166,8 +190,9 @@ function renderPendingRequests() {
   const countLabel = document.getElementById('pendingCountLabel');
   if (!box) return;
 
-  const pending = allocState.requests
-    .filter(r => r.status === 'pending')
+  const pending = allocState.requests.filter(r => r.status === 'pending');
+  const listed = allocState.requests
+    .filter(r => r.status === 'pending' || r.status === 'partially_approved')
     .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
   if (badge) {
@@ -178,12 +203,12 @@ function renderPendingRequests() {
   const reqCard = document.getElementById('cardPendingRequests');
   if (reqCard) reqCard.textContent = pending.length;
 
-  if (!pending.length) {
+  if (!listed.length) {
     box.innerHTML = '<p style="color:#94a3b8;padding:10px;">No pending requests.</p>';
     return;
   }
 
-  box.innerHTML = pending.map(r => {
+  box.innerHTML = listed.map(r => {
     const iconMap = { demo_unit: 'fa-handshake', spare_part: 'fa-gears', order: 'fa-cart-shopping', media_review: 'fa-photo-film', status_update: 'fa-pen', convert_to_order: 'fa-file-invoice-dollar', return_demo: 'fa-rotate-left' };
     const icon = iconMap[r.request_type] || 'fa-bell';
 
@@ -213,12 +238,19 @@ function renderPendingRequests() {
       subtitle = r.details?.note || '';
     }
 
+    if (r.status === 'partially_approved') {
+      subtitle = (subtitle || '') + ` • Partial: ${(r.details?.partial?.approved_items || []).length} approved, ${(r.details?.partial?.unapproved_items || []).length} not approved — ${esc(r.details?.partial?.remarks || '')}`;
+    }
+    const canPartial = r.status === 'pending' && ['demo_unit', 'order'].includes(r.request_type) && (r.details?.items || []).length > 1;
     // status_update is completed from the Service page's Update Status action (needs
     // service charges etc. that this quick panel doesn't collect), so no approve/reject here
-    const actions = r.request_type === 'status_update'
-      ? `<p style="font-size:11px;color:#94a3b8;">Complete this from the Service page's Update Status action.</p>`
-      : `<div style="display:flex;gap:8px;">
+    const actions = r.status === 'partially_approved'
+      ? `<span style="font-size:12px;color:#92400e;background:#fef3c7;padding:4px 10px;border-radius:999px;font-weight:600;">Awaiting distributor</span>`
+      : r.request_type === 'status_update'
+        ? `<p style="font-size:11px;color:#94a3b8;">Complete this from the Service page's Update Status action.</p>`
+        : `<div style="display:flex;gap:8px;">
           <button class="req-approve-btn" style="padding:6px 12px;border:none;border-radius:8px;background:#16a34a;color:#fff;cursor:pointer;">Approve</button>
+          ${canPartial ? '<button class="req-partial-btn" style="padding:6px 12px;border:none;border-radius:8px;background:#d97706;color:#fff;cursor:pointer;">Partial</button>' : ''}
           <button class="req-reject-btn" style="padding:6px 12px;border:none;border-radius:8px;background:#d62828;color:#fff;cursor:pointer;">Reject</button>
         </div>`;
 
@@ -232,6 +264,7 @@ function renderPendingRequests() {
             <p style="margin:0 0 6px;word-break:break-word;">${subtitle || '-'}</p>
             <div style="display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:#64748b;">
               <span style="background:#eef2ff;color:#3730a3;padding:2px 8px;border-radius:999px;font-weight:600;">${esc(typeLabel)}</span>
+              ${r.status === 'partially_approved' ? '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:999px;font-weight:600;">Partially approved</span>' : ''}
               <span><i class="fa-regular fa-user"></i> Raised by <b>${esc(r.raised_by ?? '-')}</b></span>
               <span title="Request generated on"><i class="fa-regular fa-clock"></i> Requested on <b>${fmtReqDateTime(r.created_at)}</b></span>
             </div>
@@ -246,6 +279,7 @@ function renderPendingRequests() {
 
   box.querySelectorAll('.req-approve-btn').forEach(btn => btn.addEventListener('click', e => approveRequest(rowRequestId(e))));
   box.querySelectorAll('.req-reject-btn').forEach(btn => btn.addEventListener('click', e => rejectRequest(rowRequestId(e))));
+  box.querySelectorAll('.req-partial-btn').forEach(btn => btn.addEventListener('click', e => openRequestPopup(rowRequest(e))));
   box.querySelectorAll('.req-view-btn').forEach(btn => btn.addEventListener('click', e => openRequestDetailsModal(rowRequest(e))));
 }
 
@@ -271,7 +305,8 @@ function openRequestDetailsModal(r) {
     body = `
       ${itemsRows || '<div class="detail"><small>Products</small><p>-</p></div>'}
       <div class="detail"><small>Requested By</small><p>${esc(r.raised_by)}</p></div>
-      <div class="detail"><small>Remarks</small><p>${esc(d.remarks || '-')}</p></div>`;
+      <div class="detail"><small>Remarks</small><p>${esc(d.remarks || '-')}</p></div>
+      ${partialInfoHtml(d)}`;
   } else if (r.request_type === 'return_demo') {
     heading = 'Demo Unit Return';
     const itemsRows = (d.items || []).map(i => itemDetailBlock(i, false)).join('');
@@ -298,6 +333,7 @@ function openRequestDetailsModal(r) {
       ${itemsRows || '<div class="detail"><small>Products</small><p>-</p></div>'}
       ${customerDetailBlock(d.customer)}
       ${detailRow('Payment Mode', d.payment_mode)}${detailRow('Discount', d.discount ? '₹' + d.discount : '')}
+      ${partialInfoHtml(d)}
       <div class="detail"><small>Requested By</small><p>${esc(r.raised_by ?? '-')}</p></div>
       ${(d.attachments || []).length ? `<div class="detail"><small>Attachments</small><p>${d.attachments.map((f, i) => `<a href="#" class="attach-link" data-i="${i}" style="display:block;color:#1665ff;">${esc(f.name)}</a>`).join('')}</p></div>` : ''}`;
   } else if (r.request_type === 'spare_part') {
@@ -536,6 +572,10 @@ async function approveRequest(requestId, extra) {
     const res = await apiFetch(`/request/approve/${requestId}`, opts);
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'approval failed');
+    if (data.pending_allocation && data.redirect) {          // spare part: go choose the hologram number(s)
+      if (/allocated\.html$/.test(location.pathname)) return openRequestedPartAllocation(new URL(data.redirect, location.href).searchParams);
+      window.location.href = data.redirect; return;
+    }
     await loadPendingRequests();
     await loadAllocations();
     await loadInventoryForAllocation();
@@ -725,7 +765,7 @@ function allocCvHead() {
 function allocCvCells(x) {
   if (allocCV.requests) {
     return [esc(ALLOC_REQ_LABELS[x.request_type] || x.request_type || '-'), requestSummary(x), esc(x.raised_by || '-'),
-      fmtReqDateTime(x.created_at)];
+    fmtReqDateTime(x.created_at)];
   }
   const meta = returnMeta(x);
   return [
@@ -766,7 +806,7 @@ function openAllocCardDetailModal(type) {
   allocCV.requests = requests;
   allocCV.f = {};
   allocCV.base = requests
-    ? allocState.requests.filter(r => r.status === 'pending').sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+    ? allocState.requests.filter(r => r.status === 'pending' || r.status === 'partially_approved').sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
     : allocCardList(type);
   const opt = arr => arr.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
   const uniq = arr => [...new Set(arr.filter(Boolean))].sort();
@@ -941,17 +981,17 @@ function renderAllocationsTable(allocations) {
       <td>
         <button class="icon-btn view-alloc-btn"><i class="fa-solid fa-eye"></i></button>
         ${window.__allocCanEdit && !isSpare && !a.dispatch && !meta.complete
-          ? '<button class="icon-btn edit-alloc-btn" title="Edit (serial / details)"><i class="fa-solid fa-pen"></i></button>' : ''}
+        ? '<button class="icon-btn edit-alloc-btn" title="Edit (serial / details)"><i class="fa-solid fa-pen"></i></button>' : ''}
         ${window.__allocCanEdit && !isSpare && !meta.complete
-          ? '<button class="icon-btn convert-alloc-btn" title="Convert to Order"><i class="fa-solid fa-file-invoice-dollar"></i></button>' : ''}
+        ? '<button class="icon-btn convert-alloc-btn" title="Convert to Order"><i class="fa-solid fa-file-invoice-dollar"></i></button>' : ''}
         ${!isSpare && !a.dispatch && !a.sent_to_dispatch && window.__allocCanCreate
-          ? '<button class="icon-btn dispatch-alloc-btn" title="Send to Dispatch"><i class="fa-solid fa-truck-fast"></i></button>' : ''}
+        ? '<button class="icon-btn dispatch-alloc-btn" title="Send to Dispatch"><i class="fa-solid fa-truck-fast"></i></button>' : ''}
         ${!isSpare && a.sent_to_dispatch && !a.dispatch
-          ? '<span class="stock pending" title="Waiting to be dispatched" style="padding:4px 8px;">In Dispatch Queue</span>' : ''}
+        ? '<span class="stock pending" title="Waiting to be dispatched" style="padding:4px 8px;">In Dispatch Queue</span>' : ''}
         ${!meta.complete && window.__allocCanReturnOrDamage ? '<button class="icon-btn return-alloc-btn"><i class="fa-solid fa-rotate-left"></i></button>' : ''}
         ${window.__allocCanReturnOrDamage ? (a.damage_report?.reported
-          ? '<button class="icon-btn damage-view-btn" title="Damage reported" style="color:#d62828;"><i class="fa-solid fa-triangle-exclamation"></i></button>'
-          : '<button class="icon-btn damage-report-btn" title="Report damaged product"><i class="fa-regular fa-triangle-exclamation"></i></button>') : ''}
+        ? '<button class="icon-btn damage-view-btn" title="Damage reported" style="color:#d62828;"><i class="fa-solid fa-triangle-exclamation"></i></button>'
+        : '<button class="icon-btn damage-report-btn" title="Report damaged product"><i class="fa-regular fa-triangle-exclamation"></i></button>') : ''}
       </td>`;
     tbody.appendChild(tr);
   });
@@ -1030,10 +1070,10 @@ function openViewAllocationModal(a) {
        <div class="detail"><small>Service ID</small><p>${a.spare_part?.service_id ?? ''}</p></div>`
     : `${(a.items || []).map(i => itemDetailBlock(i, false)).join('')}
        ${a.allocation_type === 'demo_unit'
-         ? customerDetailBlock(a.customer) + detailRow('Distributor', a.allocated_by)
-         : detailRow('Sales Person', [a.sales_person?.name, a.sales_person?.contact_number].filter(Boolean).join(' — '))
-           + detailRow('Company', a.company_name) + detailRow('Address', a.address)
-           + detailRow('GST No.', a.gst_number) + detailRow('Phone', a.phone_number)}
+      ? customerDetailBlock(a.customer) + detailRow('Distributor', a.allocated_by)
+      : detailRow('Sales Person', [a.sales_person?.name, a.sales_person?.contact_number].filter(Boolean).join(' — '))
+      + detailRow('Company', a.company_name) + detailRow('Address', a.address)
+      + detailRow('GST No.', a.gst_number) + detailRow('Phone', a.phone_number)}
        ${a.convert_request?.price ? detailRow('Requested Order Price', '₹' + a.convert_request.price + (a.convert_request.tax_rate ? ` (+${a.convert_request.tax_rate}% tax)` : '')) : ''}
        ${detailRow('Remarks', a.remarks)}`;
 
@@ -1407,7 +1447,7 @@ function exportAllocationsCSV() {
     withTypeFilter: true,
     getRows: getFilteredAllocations,
     onConfirm: (rows) => {
-      const header = ['Allocation ID', 'Type', 'Product/Spare Part', 'Sales Person/Service', 'Serial_no.' ,'Allotment Date', 'Return Due', 'Created By', 'Returned By', 'Returned On', 'Status'];
+      const header = ['Allocation ID', 'Type', 'Product/Spare Part', 'Sales Person/Service', 'Serial_no.', 'Allotment Date', 'Return Due', 'Created By', 'Returned By', 'Returned On', 'Status'];
       const csvRows = rows.map(a => {
         const isSpare = a.allocation_type === 'spare_part';
         return [
@@ -1553,6 +1593,8 @@ const allocWiz = {
   service: null,
   partName: '',
   partQuantity: 1,
+  requestId: '',          // technician spare_part request being fulfilled
+  queue: [],              // part names still to allocate for that request
   companyName: '',
   address: ''
 };
@@ -1566,6 +1608,8 @@ function resetAllocWiz() {
   allocWiz.service = null;
   allocWiz.partName = '';
   allocWiz.partQuantity = 1;
+  allocWiz.requestId = '';
+  allocWiz.queue = [];
   allocWiz.companyName = '';
   allocWiz.address = '';
 }
@@ -1927,64 +1971,289 @@ function renderAllotmentDetailsStep() {
   });
 }
 
-// ----- Spare-part allocation flow -----
+// ----- Part allocation flow (against a service) -----
+// Step 1: ALL services are listed (any status) with a search box.
+// Step 2: every inventory item except "product" (spare parts, service parts, accessories) can be picked.
+//   - a lot that has hologram numbers -> choose the exact hologram number(s) to give
+//   - a lot without hologram numbers  -> choose the quantity to give
+// The server deducts exactly what was chosen and records the allocation against that service.
 async function renderActiveServicesStep() {
   const body = allocModalBody();
-  allocWizTitle('Active Services');
-  body.innerHTML = `<p style="color:#94a3b8;">Loading active services...</p>`;
+  allocWizTitle('Select Service');
+  body.innerHTML = `<p style="color:#94a3b8;">Loading services...</p>`;
   try {
-    const res = await apiFetch('/service/active');
+    const res = await apiFetch('/service/');
+    if (!res.ok) throw new Error('failed to fetch services');
     const data = await res.json();
-    const list = data.dataset || [];
+    const list = (data.dataset || []).slice()
+      .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+    const statusOf = s => String(s.status || s.service_status || '').replace(/_/g, ' ');
+
     body.innerHTML = `
-      <div id="svcList" style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;"></div>
+      <input id="svcSearch" placeholder="Search by product, serial, issue, status or service ID..." style="width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:8px;box-sizing:border-box;margin-bottom:10px;">
+      <div id="svcList" style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;"></div>
       <div style="margin-top:14px;">
         <button type="button" id="backAllocType2" style="padding:10px 16px;border-radius:8px;border:none;background:#e5e7eb;cursor:pointer;">Back</button>
       </div>`;
     document.getElementById('backAllocType2').addEventListener('click', renderAllocTypeStep);
 
     const svcList = document.getElementById('svcList');
-    if (!list.length) { svcList.innerHTML = '<small style="color:#94a3b8;">No active services found.</small>'; return; }
-    svcList.innerHTML = list.map(s => `
-      <div class="svc-row" data-id="${s.service_id}" style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;cursor:pointer;">
-        <strong>${s.product_id ?? ''}</strong> — ${s.serial_no ?? ''}<br>
-        <small style="color:#64748b;">${s.issue ?? ''} • ${s.status ?? ''}</small>
-      </div>`).join('');
-    svcList.querySelectorAll('.svc-row').forEach(row => row.addEventListener('click', () => {
-      const s = list.find(x => x.service_id === row.dataset.id);
-      allocWiz.service = s;
-      renderSparePartFormStep();
-    }));
+    const searchEl = document.getElementById('svcSearch');
+    const draw = () => {
+      const term = searchEl.value.trim().toLowerCase();
+      const rows = list.filter(s => !term || [s.service_id, s.product_id, s.product_name, s.model_no, s.serial_no, s.issue, statusOf(s), s.company_name]
+        .join(' ').toLowerCase().includes(term));
+      if (!rows.length) { svcList.innerHTML = `<small style="color:#94a3b8;">${list.length ? 'No service matches your search.' : 'No services found.'}</small>`; return; }
+      svcList.innerHTML = rows.map(s => `
+        <div class="svc-row" data-id="${esc(s.service_id)}" style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;cursor:pointer;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+            <strong>${esc(s.product_name || s.product_id || '')}</strong>
+            <span style="font-size:11px;font-weight:600;color:#1665ff;background:#eef3fb;border-radius:999px;padding:2px 10px;text-transform:capitalize;">${esc(statusOf(s) || '-')}</span>
+          </div>
+          <small style="color:#64748b;">Serial: ${esc(s.serial_no || '-')} • #${esc((s.service_id || '').slice(0, 8))}</small><br>
+          <small style="color:#64748b;">${esc(s.issue || '')}</small>
+        </div>`).join('');
+      svcList.querySelectorAll('.svc-row').forEach(row => row.addEventListener('click', () => {
+        allocWiz.service = list.find(x => x.service_id === row.dataset.id);
+        renderSparePartFormStep();
+      }));
+    };
+    searchEl.addEventListener('input', draw);
+    draw();
   } catch (err) {
     if (err.message !== 'unauthorized' && err.message !== 'forbidden') body.innerHTML = '<small style="color:#d62828;">Could not load services.</small>';
   }
 }
 
-function renderSparePartFormStep() {
+// Everything in inventory except plain products (and faulty/damaged stock) can be given to a service.
+const ALLOC_PART_LABELS = { spare_parts: 'Spare Part', service_parts: 'Service Part', accessories: 'Accessory' };
+const isPartType = p => !!ALLOC_PART_LABELS[p.product_type];
+const holoCountOf = p => (typeof p.hologram_count === 'number' ? p.hologram_count
+  : (Array.isArray(p.hologram_numbers) ? p.hologram_numbers.length : (p.hologram_no ? 1 : 0)));
+
+// the list only carries hologram_count; the numbers themselves come from the lot detail
+async function allocFetchLotDetail(p) {
+  try {
+    const params = new URLSearchParams({
+      product_id: p.product_id || '', model_no: p.model_no || '', product_type: p.product_type || '', lot_id: p._id || ''
+    });
+    const res = await apiFetch(`/inventory/detail?${params}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (p._id && data.product && data.product._id && data.product._id !== p._id) return null;
+    return { ...p, ...data.product };
+  } catch (e) { console.error(e); return null; }
+}
+async function allocLotHolograms(lot) {
+  const out = [];
+  const seen = new Set();
+  const details = await Promise.all(lot.docs.filter(d => holoCountOf(d) > 0).map(allocFetchLotDetail));
+  details.forEach(d => {
+    if (!d) return;
+    const arr = Array.isArray(d.hologram_numbers) ? d.hologram_numbers : (d.hologram_no ? [d.hologram_no] : []);
+    arr.forEach(h => { const k = String(h).trim(); if (k && !seen.has(k)) { seen.add(k); out.push({ no: k, lot_id: d._id || '' }); } });
+  });
+  return out;
+}
+
+async function renderSparePartFormStep() {
+  const svc = allocWiz.service || {};
   const body = allocModalBody();
-  allocWizTitle(`Spare Part — Service #${(allocWiz.service.service_id || '').slice(0, 8)}`);
+  allocWizTitle(`Allocate to Service #${(svc.service_id || '').slice(0, 8)}`);
+  body.innerHTML = `<p style="color:#94a3b8;">Loading inventory...</p>`;
+  await loadInventoryForAllocation();
+
+  // one lot per inventory document (spare/service parts each have their own lot id)
+  const lotMap = new Map();
+  (allocState.products || []).filter(p => isPartType(p) && (Number(p.quantity) || 0) > 0).forEach(p => {
+    const k = String(p._id || `${p.product_id}||${p.product_name}||${p.model_no}`);
+    lotMap.set(k, {
+      key: k, product_id: p.product_id, type: p.product_type, name: p.product_name || '', model: p.model_no || '',
+      parent: p.parent_product_name || '', stock: Number(p.quantity) || 0, tagged: holoCountOf(p), docs: [p]
+    });
+  });
+  const lots = [...lotMap.values()].sort((a, b) => a.name.localeCompare(b.name));
+
+  const svcNames = [svc.product_name, svc.product_id].filter(Boolean).map(x => String(x).trim().toLowerCase());
+  const forService = l => !!l.parent && svcNames.includes(l.parent.trim().toLowerCase());
+  const hasMatches = lots.some(forService);
+
   body.innerHTML = `
     <div style="background:#f8fafc;border-radius:8px;padding:10px;margin-bottom:12px;font-size:13px;">
-      Product: ${allocWiz.service.product_id ?? ''} • Serial: ${allocWiz.service.serial_no ?? ''}<br>
-      Issue: ${allocWiz.service.issue ?? ''}
+      Product: ${esc(svc.product_name || svc.product_id || '')} • Serial: ${esc(svc.serial_no || '')}<br>
+      Issue: ${esc(svc.issue || '')}
     </div>
-    <form id="sparePartForm" style="display:flex;flex-direction:column;gap:10px;">
-      <input name="part_name" placeholder="Spare Part Name" required>
-      <input name="quantity" type="number" min="1" value="1" placeholder="Quantity" required>
-      <div style="display:flex;justify-content:space-between;margin-top:10px;">
+    ${allocWiz.requestId && allocWiz.queue.length ? `<div style="background:#eef5ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;margin-bottom:12px;font-size:13px;color:#1e3a8a;">
+      Technician requested: <b>${allocWiz.queue.map(esc).join(', ')}</b>. The item is pre-selected — just choose the hologram number(s).</div>` : ''}
+    <form id="sparePartForm">
+      <div style="font-size:12px;font-weight:600;color:#334155;margin-bottom:4px;">1. Select item <small style="font-weight:400;color:#94a3b8;">(spare parts, service parts, accessories)</small></div>
+      <div style="display:flex;gap:8px;">
+        <input id="spFilter" placeholder="Search item..." style="flex:1;width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:8px;box-sizing:border-box;min-width:0;">
+      </div>
+      ${hasMatches ? `<label style="display:flex;align-items:center;justify-content:flex-start;gap:6px;font-size:12px;color:#475569;margin:8px 0;"><input type="checkbox" id="spOnlyFor" style="width:auto;margin:0;"> Only items that belong to this product</label>` : '<div style="height:8px;"></div>'}
+      <div id="spList" style="max-height:180px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px;"></div>
+
+      <div id="spHoloBox" style="display:none;margin-top:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-size:12px;font-weight:600;color:#334155;">2. Choose hologram number(s)</span>
+          <span id="spHoloInfo" style="font-size:12px;color:#64748b;"></span>
+        </div>
+        <input id="spHoloSearch" placeholder="Search hologram number..." style="width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:8px;box-sizing:border-box;">
+        <div style="display:flex;gap:8px;margin:8px 0;">
+          <button type="button" id="spSelShown" style="padding:5px 10px;border:none;border-radius:6px;background:#e2e8f0;cursor:pointer;font-size:12px;">Select shown</button>
+          <button type="button" id="spClear" style="padding:5px 10px;border:none;border-radius:6px;background:#e2e8f0;cursor:pointer;font-size:12px;">Clear</button>
+        </div>
+        <div id="spHoloList" style="max-height:170px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px;padding:8px;display:flex;flex-wrap:wrap;gap:6px;"></div>
+      </div>
+
+      <div id="spQtyBox" style="display:none;margin-top:14px;">
+        <span style="font-size:12px;font-weight:600;color:#334155;">2. Quantity to give</span>
+        <small id="spQtyInfo" style="margin-left:8px;color:#64748b;"></small>
+        <input id="spQty" type="number" min="1" value="1" style="width:100%;margin-top:4px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;box-sizing:border-box;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;">
+          <span style="font-size:12px;font-weight:600;color:#334155;">3. Hologram numbers <small style="font-weight:400;color:#94a3b8;">(optional — type or edit, one per line or comma separated)</small></span>
+          <span id="spManualInfo" style="font-size:12px;color:#64748b;"></span>
+        </div>
+        <textarea id="spManual" rows="3" placeholder="e.g. HG-1001, HG-1002" style="width:100%;margin-top:4px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;box-sizing:border-box;font-family:inherit;"></textarea>
+      </div>
+
+      <div id="spPicked" style="font-size:13px;color:#64748b;margin:10px 0 0;">Select an item to allocate.</div>
+      <div style="display:flex;justify-content:space-between;margin-top:14px;">
         <button type="button" id="backSpare" style="padding:10px 16px;border-radius:8px;border:none;background:#e5e7eb;cursor:pointer;">Back</button>
-        <button type="submit" style="padding:10px 16px;border-radius:8px;border:none;background:#16a34a;color:#fff;cursor:pointer;">Allocate</button>
+        <button type="submit" id="spSubmit" disabled style="padding:10px 16px;border-radius:8px;border:none;background:#16a34a;color:#fff;cursor:pointer;opacity:.5;">Allocate</button>
       </div>
     </form>`;
-  document.getElementById('backSpare').addEventListener('click', renderActiveServicesStep);
-  document.getElementById('sparePartForm').addEventListener('submit', async e => {
+  document.getElementById('backSpare').addEventListener('click', () => {
+    if (allocWiz.requestId) { document.getElementById('allocateModal').style.display = 'none'; resetAllocWiz(); }
+    else renderActiveServicesStep();
+  });
+
+  const $ = id => document.getElementById(id);
+  const listEl = $('spList'), pickedEl = $('spPicked'), submitEl = $('spSubmit');
+  const filterEl = $('spFilter'), onlyEl = $('spOnlyFor');
+  const holoBox = $('spHoloBox'), holoList = $('spHoloList'), holoSearch = $('spHoloSearch'), holoInfo = $('spHoloInfo');
+  const qtyBox = $('spQtyBox'), qtyEl = $('spQty'), qtyInfo = $('spQtyInfo');
+  const manualEl = $('spManual'), manualInfo = $('spManualInfo');
+  const manualList = () => [...new Set(manualEl.value.split(/[\n,;]+/).map(x => x.trim()).filter(Boolean))];
+  let sel = null, holos = [], chosen = new Set();
+  const holoCache = new Map();
+  const byHologram = () => !!sel && sel.tagged > 0;
+  const qtyValue = () => Math.max(0, Math.min(Math.floor(Number(qtyEl.value) || 0), sel ? sel.stock : 0));
+
+  function updateSummary() {
+    let n = 0;
+    if (sel) n = byHologram() ? chosen.size : qtyValue();
+    holoInfo.textContent = `${chosen.size} selected / ${holos.length} available`;
+    { const m = manualList().length; manualInfo.textContent = m ? `${m} number${m === 1 ? '' : 's'}${sel && m > qtyValue() ? ' — more than quantity' : ''}` : ''; }
+    if (!sel) pickedEl.textContent = 'Select an item to allocate.';
+    else if (byHologram()) pickedEl.innerHTML = `Giving <b>${n}</b> × <b>${esc(sel.name)}</b>${sel.model ? ' · ' + esc(sel.model) : ''}${n ? ' — ' + [...chosen].slice(0, 6).map(esc).join(', ') + (n > 6 ? ` +${n - 6} more` : '') : ''}`;
+    else pickedEl.innerHTML = `Giving <b>${n}</b> × <b>${esc(sel.name)}</b>${sel.model ? ' · ' + esc(sel.model) : ''}`;
+    submitEl.disabled = !n; submitEl.style.opacity = n ? '1' : '.5';
+  }
+  function drawHolos() {
+    const term = holoSearch.value.trim().toLowerCase();
+    const rows = holos.filter(h => !term || h.no.toLowerCase().includes(term));
+    holoList.innerHTML = rows.length ? rows.map(h => `
+      <label data-h="${esc(h.no)}" style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:20px;font-size:12px;cursor:pointer;border:1px solid ${chosen.has(h.no) ? '#2563eb' : '#e2e8f0'};background:${chosen.has(h.no) ? '#eff6ff' : '#fff'};">
+        <input type="checkbox" ${chosen.has(h.no) ? 'checked' : ''} style="margin:0;"> ${esc(h.no)}
+      </label>`).join('')
+      : `<span style="font-size:12px;color:#94a3b8;">${holos.length ? 'No hologram number matches your search.' : 'No hologram numbers on file for this item.'}</span>`;
+    holoList.querySelectorAll('label[data-h]').forEach(l => l.querySelector('input').addEventListener('change', e => {
+      const h = l.dataset.h;
+      if (e.target.checked) chosen.add(h); else chosen.delete(h);
+      drawHolos(); updateSummary();
+    }));
+    holoList._shown = rows;
+  }
+  async function pick(key) {
+    sel = lotMap.get(key) || null;
+    chosen = new Set(); holos = []; holoSearch.value = ''; manualEl.value = '';
+    drawLots();
+    holoBox.style.display = 'none'; qtyBox.style.display = 'none';
+    if (!sel) { updateSummary(); return; }
+    if (!byHologram()) {
+      qtyBox.style.display = 'block';
+      qtyEl.max = sel.stock; qtyEl.value = 1;
+      qtyInfo.textContent = `${sel.stock} in stock`;
+      updateSummary();
+      return;
+    }
+    holoBox.style.display = 'block';
+    holoList.innerHTML = '<span style="font-size:12px;color:#94a3b8;">Loading hologram numbers...</span>';
+    updateSummary();
+    if (!holoCache.has(key)) holoCache.set(key, await allocLotHolograms(sel));
+    if (!sel || sel.key !== key) return;       // user picked something else meanwhile
+    holos = holoCache.get(key);
+    drawHolos(); updateSummary();
+  }
+  function drawLots() {
+    const term = filterEl.value.trim().toLowerCase();
+    const only = onlyEl && onlyEl.checked;
+    const rows = lots.filter(l => (!only || forService(l)) && 
+      (!term || [l.name, l.model, l.parent, l.product_id, ALLOC_PART_LABELS[l.type]].join(' ').toLowerCase().includes(term)));
+    if (!rows.length) {
+      listEl.innerHTML = `<p style="padding:14px;color:#94a3b8;font-size:13px;">${lots.length ? 'No item matches.' : 'No spare parts, service parts or accessories in inventory.'}</p>`;
+      return;
+    }
+    listEl.innerHTML = rows.map(l => `
+      <div class="sp-row" data-key="${esc(l.key)}" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #f1f5f9;cursor:pointer;${sel && sel.key === l.key ? 'background:#eff6ff;' : ''}">
+        <div>
+          <strong style="font-size:13px;">${esc(l.name)}</strong>${l.model ? ` <small style="color:#64748b;">· ${esc(l.model)}</small>` : ''}
+          <small style="color:#1665ff;"> · ${esc(ALLOC_PART_LABELS[l.type])}</small>
+          ${l.parent ? `<br><small style="color:#94a3b8;">Belongs to: ${esc(l.parent)}</small>` : ''}
+        </div>
+        <span style="font-size:12px;font-weight:600;white-space:nowrap;color:${l.tagged ? '#16a34a' : '#64748b'};">${l.tagged ? `${l.tagged} hologram${l.tagged === 1 ? '' : 's'}` : `Qty ${l.stock}`}</span>
+      </div>`).join('');
+    listEl.querySelectorAll('.sp-row').forEach(r => r.addEventListener('click', () => pick(r.dataset.key)));
+  }
+  filterEl.addEventListener('input', drawLots);
+  if (onlyEl) onlyEl.addEventListener('change', drawLots);
+  holoSearch.addEventListener('input', drawHolos);
+  qtyEl.addEventListener('input', updateSummary);
+  manualEl.addEventListener('input', () => {
+    const n = manualList().length;
+    if (n && sel) qtyEl.value = Math.min(n, sel.stock);   // quantity follows the numbers typed
+    updateSummary();
+  });
+  $('spSelShown').addEventListener('click', () => {
+    const shown = holoList._shown || [];
+    if (shown.length > 25 && !confirm(`Select all ${shown.length} shown hologram numbers?`)) return;
+    shown.forEach(h => chosen.add(h.no)); drawHolos(); updateSummary();
+  });
+  $('spClear').addEventListener('click', () => { chosen.clear(); drawHolos(); updateSummary(); });
+  drawLots(); updateSummary();
+
+  // opened from a technician's request: pre-add the requested part
+  if (allocWiz.requestId && allocWiz.queue.length) {
+    const want = String(allocWiz.queue[0]).trim().toLowerCase();
+    const hit = lots.find(l => l.name.trim().toLowerCase() === want) || lots.find(l => l.name.toLowerCase().includes(want) || want.includes(l.name.toLowerCase()));
+    if (hit) { filterEl.value = hit.name; drawLots(); pick(hit.key); }
+    else { filterEl.value = allocWiz.queue[0]; drawLots(); pickedEl.innerHTML = `<span style="color:#d62828;">"${esc(allocWiz.queue[0])}" was not found in stock — search and pick the closest item.</span>`; }
+  }
+
+  $('sparePartForm').addEventListener('submit', async e => {
     e.preventDefault();
-    const fd = new FormData(e.target);
+    if (!sel) { alert('Select an item to allocate.'); return; }
+    const part = sel;
+    const withHolo = byHologram();
+    const picked = withHolo ? holos.filter(h => chosen.has(h.no)) : [];
+    const quantity = withHolo ? picked.length : qtyValue();
+    if (!quantity) { alert(withHolo ? 'Select the hologram number(s) to give.' : 'Enter a valid quantity.'); return; }
+    if (!withHolo && manualList().length > quantity) { alert('You typed more hologram numbers than the quantity. Increase the quantity or remove some numbers.'); return; }
+    submitEl.disabled = true; submitEl.textContent = 'Allocating...';
     const payload = {
       spare_part: {
-        service_id: allocWiz.service.service_id,
-        part_name: fd.get('part_name'),
-        quantity: Number(fd.get('quantity')) || 1
+        service_id: svc.service_id,
+        part_name: part.name,
+        quantity,
+        product_id: part.product_id,
+        model_no: part.model,
+        product_type: part.type,
+        lot_id: part.docs[0]?._id || '',
+        hologram_numbers: picked.map(h => h.no),
+        holograms: picked.map(h => ({ hologram_number: h.no, lot_id: h.lot_id })),
+        request_id: allocWiz.requestId || '',
+        manual_holograms: withHolo ? [] : manualList()
       }
     };
     try {
@@ -1993,9 +2262,24 @@ function renderSparePartFormStep() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'allocation failed');
+      // confirm those exact hologram numbers left inventory
+      let stillThere = [];
+      if (withHolo) {
+        await loadInventoryForAllocation();
+        const lotsTouched = part.docs.filter(d => picked.some(h => h.lot_id === d._id));
+        const fresh = await Promise.all(lotsTouched.map(allocFetchLotDetail));
+        const left = new Set(picked.map(h => h.no));
+        fresh.forEach(d => { if (d) (Array.isArray(d.hologram_numbers) ? d.hologram_numbers : []).forEach(h => { if (left.has(String(h).trim())) stillThere.push(h); }); });
+      }
+      if (stillThere.length) alert(`Allocated, but these hologram numbers are still in inventory: ${stillThere.slice(0, 10).join(', ')}${stillThere.length > 10 ? '…' : ''}. Please check the deduction on the server.`);
+      if (allocWiz.requestId && allocWiz.queue.length > 1) {   // more requested parts left for this request
+        allocWiz.queue.shift();
+        return renderSparePartFormStep();
+      }
       resetAllocWiz();
       window.location.href = data.redirect || 'service.html';
     } catch (err) {
+      submitEl.disabled = false; submitEl.textContent = 'Allocate';
       if (err.message !== 'unauthorized' && err.message !== 'forbidden') alert(err.message);
     }
   });

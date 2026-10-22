@@ -1,13 +1,17 @@
 {
-  "name": "accure-erp",
+  "name": "Accure-erp",
   "version": "1.0.0",
   "main": "main.js",
   "scripts": {
     "dist": "electron-builder"
   },
   "build": {
-    "files": ["main.js", "package.json", "build/**/*"],
-    "appId": "com.accure.erp",
+    "files": [
+      "main.js",
+      "package.json",
+      "build/**/*"
+    ],
+    "appId": "com.Accure.erp",
     "productName": "Accure ERP",
     "icon": "build/icon.ico",
     "win": {
