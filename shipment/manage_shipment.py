@@ -37,7 +37,7 @@ class shipment_manager(mongodbclient):
     def __init__(self, company_name=None, company_address=None, dispatch_date=None,
                  received_date=None, products=None, created_by=None,
                  customer_id=None, payment_mode="paid", currency="INR", exchange_rate=1,
-                 paid_amount=0, credit_days=0):
+                 paid_amount=0, credit_days=0, invoice_no=""):
         """
         company_name / company_address: destination company details
         dispatch_date: str (YYYY-MM-DD) -> required, when the shipment left
@@ -64,6 +64,7 @@ class shipment_manager(mongodbclient):
         self.products = products or []
         self.created_by = created_by
         self.customer_id = customer_id or ""
+        self.invoice_no = (invoice_no or "").strip()
         self.payment_mode = payment_mode if payment_mode in PAYMENT_MODES else "paid"
         self.paid_amount = float(paid_amount or 0)
         self.credit_days = int(credit_days or 0)
@@ -132,6 +133,7 @@ class shipment_manager(mongodbclient):
                 "products": products,
                 "created_by": self.created_by,
                 "customer_id": self.customer_id,
+                "invoice_no": self.invoice_no,
                 "payment_mode": pay["payment_mode"],
                 "paid_amount": pay["paid_amount"],          # in the shipment's own currency
                 "credit_days": pay["credit_days"],
