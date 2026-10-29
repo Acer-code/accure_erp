@@ -59,12 +59,12 @@ class shipment_manager(mongodbclient):
         self.shipment_id = str(uuid.uuid4())
         self.company_name = company_name
         self.company_address = company_address or ""
+        self.invoice_no = (invoice_no or "").strip()
         self.dispatch_date = dispatch_date
         self.received_date = received_date or None
         self.products = products or []
         self.created_by = created_by
         self.customer_id = customer_id or ""
-        self.invoice_no = (invoice_no or "").strip()
         self.payment_mode = payment_mode if payment_mode in PAYMENT_MODES else "paid"
         self.paid_amount = float(paid_amount or 0)
         self.credit_days = int(credit_days or 0)
@@ -127,13 +127,13 @@ class shipment_manager(mongodbclient):
                 "shipment_id": self.shipment_id,
                 "company_name": self.company_name,
                 "company_address": self.company_address,
+                "invoice_no": self.invoice_no,
                 "dispatch_date": self.dispatch_date,
                 "received_date": self.received_date,          # None until marked received
                 "status": "received" if self.received_date else "pending",
                 "products": products,
                 "created_by": self.created_by,
                 "customer_id": self.customer_id,
-                "invoice_no": self.invoice_no,
                 "payment_mode": pay["payment_mode"],
                 "paid_amount": pay["paid_amount"],          # in the shipment's own currency
                 "credit_days": pay["credit_days"],

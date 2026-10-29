@@ -5,14 +5,14 @@ const AUTH = {
 };
 
 const ROLE_ACCESS = {
-  admin:           ['main_dashboard.html', 'qc.html', 'orders.html', 'inventory.html', 'service.html', 'allocated.html', 'dispatch.html', 'shipment.html', 'assembly.html', 'users.html', 'reports.html', 'create_account.html', 'attendance.html', 'work_report.html'],
-  accounts:        ['main_dashboard.html', 'orders.html', 'inventory.html', 'service.html', 'allocated.html', 'dispatch.html', 'shipment.html', 'assembly.html', 'users.html', 'reports.html', 'work_report.html'],
-  service_manager: ['service.html', 'inventory.html', 'dispatch.html','allocated.html', 'work_report.html'],
-  assembly:        ['assembly.html', 'inventory.html', 'work_report.html'],
-  technician:      ['technician.html','technician_dashboard.html', 'work_report.html'],
-  distributor:     ['distributor.html', 'distributor_orders.html', 'distributor_team.html','technician.html', 'work_report.html'],
+  admin: ['main_dashboard.html', 'qc.html', 'orders.html', 'inventory.html', 'service.html', 'allocated.html', 'dispatch.html', 'shipment.html', 'assembly.html', 'users.html', 'reports.html', 'create_account.html', 'attendance.html', 'work_report.html'],
+  accounts: ['main_dashboard.html', 'orders.html', 'inventory.html', 'service.html', 'allocated.html', 'dispatch.html', 'shipment.html', 'assembly.html', 'users.html', 'reports.html', 'work_report.html'],
+  service_manager: ['service.html', 'inventory.html', 'dispatch.html', 'allocated.html', 'work_report.html'],
+  assembly: ['assembly.html', 'inventory.html', 'work_report.html'],
+  technician: ['technician.html', 'technician_dashboard.html', 'work_report.html'],
+  distributor: ['distributor.html', 'distributor_orders.html', 'distributor_team.html', 'technician.html', 'work_report.html'],
   inventory_manager: ['inventory.html', 'distributor.html', 'distributor_orders.html', 'assembly.html', 'shipment.html', 'work_report.html'],
-  qc:              ['qc.html'],
+  qc: ['qc.html'],
 };
 
 const ROLE_HOME = {
@@ -28,25 +28,25 @@ const ROLE_HOME = {
 
 // Every page that can be granted from the hidden /access-control page.
 const PAGE_CATALOG = [
-  { file: 'main_dashboard.html',       label: 'Dashboard',            icon: 'fa-house' },
-  { file: 'orders.html',               label: 'Orders',               icon: 'fa-cart-shopping' },
-  { file: 'inventory.html',            label: 'Inventory',            icon: 'fa-boxes-stacked' },
-  { file: 'shipment.html',             label: 'Shipment',             icon: 'fa-boxes-packing' },
-  { file: 'assembly.html',             label: 'Assembly',             icon: 'fa-gears' },
-  { file: 'service.html',              label: 'Service',              icon: 'fa-screwdriver-wrench' },
-  { file: 'allocated.html',            label: 'Allocated',            icon: 'fa-people-carry-box' },
-  { file: 'dispatch.html',             label: 'Dispatch',             icon: 'fa-truck-fast' },
-  { file: 'attendance.html',           label: 'Attendance',           icon: 'fa-calendar-check' },
-  { file: 'users.html',                label: 'Users',                icon: 'fa-users' },
-  { file: 'reports.html',              label: 'Reports',              icon: 'fa-chart-column' },
-  { file: 'qc.html',                   label: 'QC',                   icon: 'fa-clipboard-check' },
-  { file: 'work_report.html',          label: 'Work Report',          icon: 'fa-list-check' },
-  { file: 'distributor.html',          label: 'Distributor',          icon: 'fa-handshake' },
-  { file: 'distributor_orders.html',   label: 'Distributor Orders',   icon: 'fa-cart-flatbed' },
-  { file: 'distributor_team.html',     label: 'Distributor Team',     icon: 'fa-people-group' },
-  { file: 'technician.html',           label: 'Technician',           icon: 'fa-user-gear' },
+  { file: 'main_dashboard.html', label: 'Dashboard', icon: 'fa-house' },
+  { file: 'orders.html', label: 'Orders', icon: 'fa-cart-shopping' },
+  { file: 'inventory.html', label: 'Inventory', icon: 'fa-boxes-stacked' },
+  { file: 'shipment.html', label: 'Shipment', icon: 'fa-boxes-packing' },
+  { file: 'assembly.html', label: 'Assembly', icon: 'fa-gears' },
+  { file: 'service.html', label: 'Service', icon: 'fa-screwdriver-wrench' },
+  { file: 'allocated.html', label: 'Allocated', icon: 'fa-people-carry-box' },
+  { file: 'dispatch.html', label: 'Dispatch', icon: 'fa-truck-fast' },
+  { file: 'attendance.html', label: 'Attendance', icon: 'fa-calendar-check' },
+  { file: 'users.html', label: 'Users', icon: 'fa-users' },
+  { file: 'reports.html', label: 'Reports', icon: 'fa-chart-column' },
+  { file: 'qc.html', label: 'QC', icon: 'fa-clipboard-check' },
+  { file: 'work_report.html', label: 'Work Report', icon: 'fa-list-check' },
+  { file: 'distributor.html', label: 'Distributor', icon: 'fa-handshake' },
+  { file: 'distributor_orders.html', label: 'Distributor Orders', icon: 'fa-cart-flatbed' },
+  { file: 'distributor_team.html', label: 'Distributor Team', icon: 'fa-people-group' },
+  { file: 'technician.html', label: 'Technician', icon: 'fa-user-gear' },
   { file: 'technician_dashboard.html', label: 'Technician Dashboard', icon: 'fa-gauge' },
-  { file: 'create_account.html',       label: 'Create Account',       icon: 'fa-user-plus' },
+  { file: 'create_account.html', label: 'Create Account', icon: 'fa-user-plus' },
 ];
 
 // Hidden admin page (not in any sidebar): always open for admins, never grantable to others.
@@ -145,27 +145,36 @@ function checkPageAccess() {
   }
 }
 
-// "pages/orders.html?tab=x#y" -> "orders.html"
-function pageFileOf(href) {
-  return String(href || '').split('#')[0].split('?')[0].split('/').pop();
+// file name of a sidebar link, ignoring any ?query or #hash (e.g. technician.html?tab=demo)
+function sidebarFile(a) {
+  return (a.getAttribute('href') || '').split(/[?#]/)[0].split('/').pop();
 }
 
-// Removes every sidebar entry the user has no access to. The <li> is REMOVED (not just
-// display:none), so a stylesheet rule such as `.sidebar li { display:flex !important }`
-// can never bring a forbidden link back. Safe to call more than once.
 function filterSidebarByRole() {
   const role = getRole();
-  if (!role) return;
   const allowed = allowedPages(role);
+  const manager = isWorkManager();
+  const seen = new Set();
   document.querySelectorAll('.sidebar ul li a').forEach(a => {
-    if (a.hasAttribute('data-work-link')) return;            // Work / Work Report link is decided by initWorkPopup
     const href = a.getAttribute('href');
-    if (!href || href.startsWith('#') || /^(javascript:|https?:|mailto:)/i.test(href)) return;
-    const file = pageFileOf(href);
-    if (file && !allowed.includes(file)) {
-      const li = a.closest('li');
-      if (li) li.remove();
+    if (!href || href.startsWith('#')) return;
+    const file = sidebarFile(a);
+    if (!file) return;
+    const li = a.closest('li');
+    if (!li) return;
+
+    // Work links: work managers get only work.html, everybody else only work_report.html
+    if (file === 'work.html' || file === 'work_report.html') {
+      const correct = manager ? 'work.html' : 'work_report.html';
+      const permitted = manager || allowed.includes('work_report.html');
+      if (file !== correct || !permitted || seen.has(correct)) { li.style.display = 'none'; return; }
+      seen.add(correct);
+      return;
     }
+
+    // every other link: hide when not allowed, and hide repeated links to the same page
+    if (!allowed.includes(file) || seen.has(file)) { li.style.display = 'none'; return; }
+    seen.add(file);
   });
 }
 // When an admin gave this user a custom page list, add sidebar links for granted pages the
@@ -258,10 +267,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 });
-
-// Run once immediately too: on most pages common_auth.js loads after the sidebar markup,
-// so forbidden links disappear before the first paint instead of after DOMContentLoaded.
-try { if (getToken() && getRole() && document.querySelector('.sidebar ul')) filterSidebarByRole(); } catch (e) { }
 
 // =========================================================
 // Shared response popup ("wizard box") — replaces plain
@@ -1507,6 +1512,15 @@ function injectWorkSidebarLink() {
   if (!ul || ul.querySelector('a[data-work-link]')) return;
   const admin = isWorkManager();
   const file = admin ? 'work.html' : 'work_report.html';
+  // the page (or injectAllowedLinks) may already have this link: reuse it, don't add a second one
+  const existing = [...ul.querySelectorAll('a')].find(a => sidebarFile(a) === file);
+  if (existing) {
+    existing.setAttribute('data-work-link', '1');
+    if (!existing.querySelector('#workNavBadge')) {
+      existing.insertAdjacentHTML('beforeend', '<b id="workNavBadge" style="display:none;margin-left:auto;background:#d62828;color:#fff;font-size:10px;border-radius:999px;padding:1px 6px;"></b>');
+    }
+    return;
+  }
   const href = location.pathname.includes('/pages/') ? file : `pages/${file}`;
   const li = document.createElement('li');
   if (location.pathname.split('/').pop() === file) li.className = 'active';
@@ -1519,6 +1533,7 @@ function initWorkPopup() {
   // no Work Report link / popups for users who can't open that page (e.g. QC, or pages limited from /access-control)
   if (!allowedPages(getRole()).includes('work_report.html') && !isWorkManager()) return;
   injectWorkSidebarLink();
+  filterSidebarByRole();   // links added late (work link etc.) also get filtered / de-duplicated
   refreshWorkBadge();
   setInterval(refreshWorkBadge, 15000);
   if (isWorkManager()) return;
@@ -1554,7 +1569,7 @@ function initWorkPopup() {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount); else mount();
   }
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+    window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => { }));
   }
 })();
 
@@ -1665,3 +1680,41 @@ window.addEventListener('load', () => {
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount); else mount();
 })();
+
+window.serialSearchWidget = function (mount, onPick) {
+  const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  mount.innerHTML = '<input class="ssw-in" placeholder="Search by serial number (min 3 characters)..." style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;box-sizing:border-box;">' +
+    '<div class="ssw-out" style="display:none;margin-top:4px;border:1px solid #e2e8f0;border-radius:8px;max-height:180px;overflow-y:auto;background:#fff;"></div>';
+  const inp = mount.querySelector('.ssw-in');
+  const out = mount.querySelector('.ssw-out');
+  let timer = null, seq = 0, results = [];
+  const hide = () => { out.style.display = 'none'; };
+  const show = html => { out.innerHTML = html; out.style.display = 'block'; };
+  const note = t => `<div style="padding:8px 10px;color:#94a3b8;font-size:13px;">${t}</div>`;
+  const run = async () => {
+    const q = inp.value.trim();
+    if (q.length < 3) { hide(); return; }
+    const mine = ++seq;
+    show(note('Searching...'));
+    try {
+      const res = await apiFetch('/inventory/serial_search?q=' + encodeURIComponent(q));
+      const data = await res.json();
+      if (mine !== seq) return;
+      results = data.results || [];
+      if (!results.length) { show(note('No available serial number found.')); return; }
+      show(results.map((r, i) => `<div data-i="${i}" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px;"><b>${esc(r.serial_number)}</b><br><small style="color:#64748b;">${esc(r.product_name)}${r.model_no ? ' · ' + esc(r.model_no) : ''}</small></div>`).join(''));
+    } catch (e) {
+      if (mine === seq) show(note('Search failed.'));
+    }
+  };
+  inp.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(run, 350); });
+  out.addEventListener('click', e => {
+    const row = e.target.closest('[data-i]');
+    if (!row) return;
+    const r = results[Number(row.dataset.i)];
+    if (!r) return;
+    onPick(r);
+    inp.value = '';
+    hide();
+  });
+};

@@ -116,20 +116,20 @@
     const v = p => `<span class="v"${ce} data-p="${p}">${esc(getP(st, p))}</span>`;
     if (which === 'a1') {
       const rows = st.a1.map((r, i) => `<tr class="ir">${A1K.map(k => `<td>${v(`a1.${i}.${k}`)}</td>`).join('')}</tr>`).join('');
-      return `<div class="qp"><h2>ANNEXURE-1: QUALITY PLAN <small>AMPL-QC-QF-001-F1</small></h2>
+      return `<div class="qp"><h2>ANNEXURE-1: QUALITY PLAN <small>ABM-QC-QF-001-F1</small></h2>
         <table><colgroup><col style="width:12%"><col style="width:18%"><col style="width:12%"><col style="width:10%"><col style="width:11%"><col style="width:13%"><col style="width:10%"><col style="width:14%"></colgroup>
         <tr><th>Stage</th><th>Inspection / Testing Parameter</th><th>Specification / Standard</th><th>Testing Method / Reference</th><th>Sampling Plan</th><th>Acceptance Criteria</th><th>Inspection Agency</th><th>Record Format</th></tr>
         ${rows}</table>${sigHtml()}</div>`;
     }
     if (which === 'a2') {
       const rows = st.a2.map((r, i) => `<tr class="ir">${A2K.map(k => `<td>${v(`a2.${i}.${k}`)}</td>`).join('')}</tr>`).join('');
-      return `<div class="qp"><h2>ANNEXURE-2: INCOMING MATERIAL QC REGISTER <small>AMPL-QC-QF-001-F2</small></h2>
+      return `<div class="qp"><h2>ANNEXURE-2: INCOMING MATERIAL QC REGISTER <small>ABM-QC-QF-001-F2</small></h2>
         <table><colgroup><col style="width:4%"><col style="width:8%"><col style="width:14%"><col style="width:12%"><col style="width:9%"><col style="width:8%"><col style="width:11%"><col style="width:7%"><col style="width:9%"><col style="width:9%"><col style="width:9%"></colgroup>
         <tr><th>Sr no</th><th>Date</th><th>Material Name / Description</th><th>Supplier / Manufacturer Name</th><th>Invoice no.</th><th>Qty Received (Unit)</th><th>QC Report No. (QC/IM/YY-YY/XXX)</th><th>Supplier COA (Y/N)</th><th>Inspection / Test Status</th><th>Disposition (Accepted / Rejected)</th><th>QC Sign &amp; Date</th></tr>
         ${rows}</table>${sigHtml()}</div>`;
     }
     const rows = st.a3.map((r, i) => `<tr class="ir">${A3K.map(k => `<td>${v(`a3.${i}.${k}`)}</td>`).join('')}</tr>`).join('');
-    return `<div class="qp"><h2>ANNEXURE-3: FINISHED GOOD QC REGISTER <small>AMPL-QC-QF-001-F3</small></h2>
+    return `<div class="qp"><h2>ANNEXURE-3: FINISHED GOOD QC REGISTER <small>ABM-QC-QF-001-F3</small></h2>
       <table><colgroup><col style="width:5%"><col style="width:8%"><col style="width:14%"><col style="width:8%"><col style="width:8%"><col style="width:8%"><col style="width:11%"><col style="width:10%"><col style="width:9%"><col style="width:9%"><col style="width:10%"></colgroup>
       <tr><th>S.N.</th><th>Date</th><th>Product Name / Device Type</th><th>Batch / Lot No.</th><th>Mfg. Date</th><th>Batch Qty Passed (Pcs)</th><th>QC Report No. (QC/FG/YY-YY/XXX)</th><th>Testing / Inspection Result</th><th>Status (Released / Hold)</th><th>QC Officer Sign</th><th>QA Head Release Sign</th></tr>
       ${rows}</table>${sigHtml()}</div>`;
@@ -199,7 +199,7 @@
       } catch (e) { }
       ovl.innerHTML = `<div class="qpx-bar">
           <button class="rs" data-back>&larr; Back</button>
-          <b>Quality Plan (AMPL-QC-QF-001) - ${esc(asm.product_name || '')} ${esc(String(asm.assembly_id || '').slice(0, 8))}</b>
+          <b>Quality Plan (ABM-QC-QF-001) - ${esc(asm.product_name || '')} ${esc(String(asm.assembly_id || '').slice(0, 8))}</b>
           <span class="hint">Yellow fields editable hain. Changes is computer par save rehte hain.</span>
           <button class="ad" data-add="a2"><i class="fa-solid fa-plus"></i> Incoming row</button>
           <button class="ad" data-add="a3"><i class="fa-solid fa-plus"></i> FG row</button>

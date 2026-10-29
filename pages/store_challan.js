@@ -82,7 +82,7 @@
     const v = p => `<span class="v"${ce} data-p="${p}">${esc(getP(st, p))}</span>`;
     const lab = t => `<td class="l">${t}</td>`;
     const items = f.items.map((it, i) => `<tr class="ir"><td>${v(`f1.items.${i}.sr`)}</td><td>${v(`f1.items.${i}.desc`)}</td><td>${v(`f1.items.${i}.batch`)}</td><td>${v(`f1.items.${i}.mfg`)}</td><td>${v(`f1.items.${i}.unit`)}</td><td>${v(`f1.items.${i}.qty`)}</td><td>${v(`f1.items.${i}.rem`)}</td></tr>`).join('');
-    return `<div class="sc"><h2>ANNEXURE-1: CHALLAN / OUTWARD FORM <small>AMPL-STR-QF-002-F1</small></h2>
+    return `<div class="sc"><h2>ANNEXURE-1: CHALLAN / OUTWARD FORM <small>ABM-STR-QF-002-F1</small></h2>
       <table><colgroup><col style="width:22%"><col style="width:28%"><col style="width:22%"><col style="width:28%"></colgroup>
         <tr>${lab('Challan  / invoice No.:')}<td>${v('f1.challan')}</td>${lab('Mode of Transport:')}<td>${v('f1.mode')}</td></tr>
         <tr>${lab('Customer / Consignee Name:')}<td>${v('f1.customer')}</td>${lab('Invoice No. &amp; Date:')}<td>${v('f1.invoice')}</td></tr>
@@ -108,7 +108,7 @@
     const ce = ed ? ` contenteditable="${PLAIN}"` : '';
     const v = p => `<span class="v"${ce} data-p="${p}">${esc(getP(st, p))}</span>`;
     const rows = st.f2.rows.map((r, i) => `<tr class="ir">${['sr', 'date', 'no', 'cust', 'trans', 'pk', 'sec', 'gate', 'rem'].map(k => `<td>${v(`f2.rows.${i}.${k}`)}</td>`).join('')}</tr>`).join('');
-    return `<div class="sc land"><h2>ANNEXURE-2: OUTWARD REGISTER <small>AMPL-STR-QF-002-F2</small></h2>
+    return `<div class="sc land"><h2>ANNEXURE-2: OUTWARD REGISTER <small>ABM-STR-QF-002-F2</small></h2>
       <table><colgroup><col style="width:5%"><col style="width:9%"><col style="width:11%"><col style="width:18%"><col style="width:16%"><col style="width:10%"><col style="width:10%"><col style="width:9%"><col style="width:12%"></colgroup>
         <tr><th>S. No.</th><th>Date</th><th>Invoice No. / Challan No.</th><th>Customer Name &amp; Location</th><th>Transporter Details</th><th>No. of Packages (Nos/Box)</th><th>Security Check Done (Y/N)</th><th>Gate Supervisor Sign</th><th>Remarks</th></tr>
         ${rows}
@@ -143,7 +143,7 @@
     ovl.className = 'scx-ovl';
     ovl.innerHTML = `
       <div class="scx-bar">
-        <b><i class="fa-solid fa-file-invoice"></i> Store Challan (AMPL-STR-SOP-002)</b>
+        <b><i class="fa-solid fa-file-invoice"></i> Store Challan (ABM-STR-SOP-002)</b>
         <span class="hint">Yellow fields are editable. Blank fields can be filled before printing. Changes stay saved on this computer.</span>
         <button class="ad" data-add="items"><i class="fa-solid fa-plus"></i> Item row</button>
         <button class="ad" data-add="reg"><i class="fa-solid fa-plus"></i> Register row</button>

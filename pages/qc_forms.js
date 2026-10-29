@@ -123,7 +123,7 @@ table.reg th{background:#e8eefc}`;
     return `<table class="sig"><tr><td>Reviewed By(sales &amp; market personnel):</td><td>Approved By(QA executive): Tanuja Manral</td></tr><tr class="tall"><td>Sign:</td><td>Sign:</td></tr></table>`;
   }
   function f1Html(v) {
-    return `<div class="page"><h2>Annexure-1: Contract Review Checklist (AMPL-QA-QF-007-F1)</h2>
+    return `<div class="page"><h2>Annexure-1: Contract Review Checklist (ABM-QA-QF-007-F1)</h2>
       ${line('Customer Name', v.customer)}${line('Invoice No./Inquiry/PO No./PI No.', v.ref_no)}${line('Product Name & model no.', v.product)}${line('Quantity', v.qty)}
       ${opts('Delivery Schedule', ['Standard', 'Urgent'], v.delivery)}${line('Regulatory Requirements', v.regulatory)}
       ${opts('Technical Requirements Reviewed', ['Yes', 'No'], v.technical)}${opts('Commercial Terms Reviewed', ['Yes', 'No'], v.commercial)}${opts('Capability Confirmed', ['Yes', 'No'], v.capability)}
@@ -133,7 +133,7 @@ table.reg th{background:#e8eefc}`;
       <div class="line"><b>Approved By:</b> <span class="u" style="min-width:200px">${esc(v.approved_by) || '&nbsp;'}</span> &nbsp; <b>Date:</b> <span class="u" style="min-width:120px">${esc(showDate(v.approved_date)) || '&nbsp;'}</span></div></div>`;
   }
   function f2Html(v) {
-    return `<div class="page"><h2>Annexure-2: Order to Dispatch Checklist (AMPL-QA-QF-007-F2)</h2>
+    return `<div class="page"><h2>Annexure-2: Order to Dispatch Checklist (ABM-QA-QF-007-F2)</h2>
       ${line('Customer Name', v.customer)}${line('Invoice No.', v.invoice_no)}${line('Product Details', v.product)}${line('Quantity', v.qty)}${line('Manufacturing Details (month/year)', v.mfg)}
       ${opts('QA Inspection Status', ['Pass', 'Fail'], v.qa)}${opts('Packing Verified', ['Yes', 'No'], v.packing)}${opts('Label Verified', ['Yes', 'No'], v.label)}
       ${opts('Dispatch details', ['Courier', 'By Vehicle', 'Porter', 'By Hand'], v.dispatch_mode)}${line('Dispatch Date', showDate(v.dispatch_date))}${line('Transport Details', v.transport)}
@@ -199,8 +199,8 @@ table.reg th{background:#e8eefc}`;
         </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;">
-        ${panel('f1', 'Annexure-1: Contract Review Checklist (AMPL-QA-QF-007-F1)', F1)}
-        ${panel('f2', 'Annexure-2: Order to Dispatch Checklist (AMPL-QA-QF-007-F2)', F2)}
+        ${panel('f1', 'Annexure-1: Contract Review Checklist (ABM-QA-QF-007-F1)', F1)}
+        ${panel('f2', 'Annexure-2: Order to Dispatch Checklist (ABM-QA-QF-007-F2)', F2)}
       </div></div>`;
     document.body.appendChild(overlay);
 

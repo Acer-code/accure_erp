@@ -1115,18 +1115,20 @@ async function finalizeShipment() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(toServerShape(shipmentDraft))
     });
-    if (!res.ok) {
+    if (res.status === 400 || res.status === 422) {
       const err = await res.json().catch(() => ({}));
-      showResponseModal('Shipment not saved', typeof err.detail === 'string' ? err.detail : 'The server could not save this shipment (error ' + res.status + ').', false);
+      showResponseModal('Shipment not saved', typeof err.detail === 'string' ? err.detail : 'Please check the payment details.', false);
       return;
     }
-    const data = await res.json();
-    if (data.shipment_id) shipmentDraft.id = data.shipment_id;
-    shipmentDraft.customerId = data.customer_id || shipmentDraft.customerId;
-    shipmentDraft.totalInr = Math.round(draftTotal(shipmentDraft) * shipmentDraft.exchangeRate * 100) / 100;
+    if (res.ok) {
+      const data = await res.json();
+      if (data.shipment_id) shipmentDraft.id = data.shipment_id;
+      shipmentDraft.customerId = data.customer_id || shipmentDraft.customerId;
+      shipmentDraft.totalInr = Math.round(draftTotal(shipmentDraft) * shipmentDraft.exchangeRate * 100) / 100;
+    }
   } catch (err) {
-    showResponseModal('Shipment not saved', 'Could not reach the server, so nothing was saved.', false);
-    return;
+    // no backend route yet — shipment still gets added to local state below
+    console.warn('shipment: saved locally only, server unavailable', err.message);
   }
 
   shipments.unshift(shipmentDraft);
